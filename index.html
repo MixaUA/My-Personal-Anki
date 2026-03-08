@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Personal Anki</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Gochi+Hand&family=Indie+Flower&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#ffffff">
+    <link rel="apple-touch-icon" sizes="180x180" href="icon/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="icon/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="icon/favicon-16x16.png">
+    <link rel="shortcut icon" href="icon/favicon.ico">
+</head>
+<body>
+
+    <header>
+        <h1>My Personal Anki</h1>
+        <div class="top-menu">
+            <div class="top-btn" onclick="openModal('settingsOverlay')">⚙️</div>
+            <div class="top-btn" onclick="toggleTheme()">🌓</div>
+        </div>
+    </header>
+
+    <div class="shelf" id="shelf"></div>
+
+    <div class="modal-overlay" id="trainingOverlay" onclick="closeAllModals()">
+        <div class="modal-content hand-drawn-border" onclick="event.stopPropagation()">
+            <span class="close-x" onclick="closeAllModals()">✖</span>
+            <h2 id="trainingTitle">Навчання</h2>
+            
+            <div class="counter-text">Залишилось: <span id="cardsLeft">0</span></div>
+            <div class="progress-container"><div id="progressBar"></div></div>
+
+            <div class="flashcard-container" onclick="flipCard()">
+                <div class="flashcard" id="mainCard">
+                    <div class="card-face hand-drawn-border">
+                        <div class="txt-ua" id="cardUA">Переклад</div>
+                        <div class="txt-code" id="cardCode">CODE</div>
+                    </div>
+                    <div class="card-face card-back hand-drawn-border">
+                        <div class="txt-en" id="cardEN">Original</div>
+                        <div class="txt-trans" id="cardTrans">[transcription]</div>
+                        <button class="btn-speaker" onclick="event.stopPropagation(); speakCurrentCard();">🔊</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="speechPanel" class="speech-panel">
+                <div class="ptt-container">
+                    <canvas class="audio-canvas"></canvas>
+                    <button class="mic-btn round-mic">🎙️</button>
+                </div>
+                <input type="text" class="speech-input admin-input" placeholder="Press and Hold to Speak..." readonly style="width: 100%; border:none; background:var(--input-bg); text-align:center;">
+            </div>
+
+            <div id="trainingActions" style="display:none; width: 100%;">
+                <div class="training-controls">
+                    <button class="anki-button btn-grade" style="color:var(--anki-red); border-color:var(--anki-red)" onclick="gradeCard(1)">Знову</button>
+                    <button class="anki-button btn-grade" style="color:var(--anki-orange); border-color:var(--anki-orange)" onclick="gradeCard(2)">Важко</button>
+                    <button class="anki-button btn-grade" style="color:var(--anki-blue); border-color:var(--anki-blue)" onclick="gradeCard(3)">Добре</button>
+                    <button class="anki-button btn-grade" style="color:var(--anki-green); border-color:var(--anki-green)" onclick="gradeCard(4)">Легко</button>
+                </div>
+            </div>
+            <div id="hintText" style="opacity: 0.6; font-size: 0.9rem; margin-top: 10px;">Клікніть, щоб перевернути</div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="settingsOverlay" onclick="closeAllModals()">
+        <div class="modal-content hand-drawn-border" onclick="event.stopPropagation()">
+            <span class="close-x" onclick="closeAllModals()">✖</span>
+            <h2>Голос</h2>
+            <div class="filter-group">
+                <button class="filter-btn" id="btnMale" onclick="setGender('male')">👨 Male</button>
+                <button class="filter-btn" id="btnFemale" onclick="setGender('female')">👩 Female</button>
+            </div>
+            <div class="settings-row" style="margin-top: 10px;">
+                <label>Оберіть голос:</label>
+                <select id="voiceSelect" onchange="app.updateVoice(this.value)" style="width: 100%; padding: 8px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-color); color: var(--text-color); font-family: inherit; margin-top: 5px; cursor: pointer;"></select>
+            </div>
+            <div class="settings-row">
+                <label>Швидкість: <span id="valRate">0.9</span></label>
+                <input type="range" min="0.5" max="1.5" step="0.1" id="inputRate" oninput="app.updateSpeechSetting('rate', this.value)">
+            </div>
+            <div class="settings-row">
+                <label>Тембр: <span id="valPitch">1.0</span></label>
+                <input type="range" min="0.5" max="1.5" step="0.1" id="inputPitch" oninput="app.updateSpeechSetting('pitch', this.value)">
+            </div>
+            <div class="settings-row">
+                <label>Поріг шуму: <span id="valNoise">20</span></label>
+                <input type="range" min="0" max="155" step="5" id="inputNoise" oninput="app.updateSpeechSetting('noiseThreshold', this.value)">
+            </div>
+            <div class="settings-row">
+                <label>Таймаут (сек): <span id="valTimeout">3</span></label>
+                <input type="range" min="1" max="7" step="1" id="inputTimeout" oninput="app.updateSpeechSetting('silenceTimeout', this.value)">
+            </div>
+
+            <!-- Live Tuning Panel (Minimal) -->
+            <div class="speech-panel" style="margin-bottom: 20px; border-top: 1px dashed var(--border-color); padding-top: 15px;">
+                <div class="ptt-container">
+                    <canvas class="audio-canvas" style="height:120px;"></canvas>
+                    <button class="mic-btn round-mic" style="width:70px; height:70px; font-size:2rem;">🎙️</button>
+                </div>
+                <input type="text" class="speech-input admin-input" placeholder="Voice testing..." readonly style="width: 100%; text-align:center; background:none; border:none;">
+            </div>
+
+            <button class="anki-button" style="background:var(--anki-green); color:white;" onclick="closeAllModals()">Зберегти</button>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="menuOverlay" onclick="closeAllModals()">
+        <div class="modal-content hand-drawn-border" onclick="event.stopPropagation()">
+            <span class="close-x" onclick="closeAllModals()">✖</span>
+            <h2 id="menuTitle">Блокнот</h2>
+            <button class="anki-button" style="background-color:var(--anki-blue); color:white;" onclick="startTraining()">🚀 Вчити</button>
+            <button class="anki-button" onclick="openAdmin()">📝 Редагувати</button>
+            <button id="syncBtn" class="anki-button" style="background-color:var(--anki-green); color:white; display:none;" onclick="document.getElementById('updateFileInput').click()">🔄 Оновити</button>
+            <input type="file" id="updateFileInput" style="display:none" onchange="updateFromFile(event)">
+            <button class="anki-button" style="color:var(--anki-red); border-color:var(--anki-red);" onclick="deleteCurrentNotebook()">🗑️ Видалити</button>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="adminOverlay" onclick="closeAllModals()">
+        <div class="modal-content hand-drawn-border" onclick="event.stopPropagation()">
+            <span class="close-x" onclick="closeAllModals()">✖</span>
+            <h2 id="adminTitle">Редагування</h2>
+            <div id="adminCardsContainer"></div>
+            <div style="margin-top:20px; display:flex; flex-direction:column; align-items:center; gap:10px;">
+                <button class="anki-button" onclick="insertCardRow()">➕ Додати рядок</button>
+                <button class="anki-button" style="background-color:var(--anki-green); color:white;" onclick="saveAdminData()">💾 Зберегти</button>
+                <button class="anki-button" style="color:var(--accent); border-color:var(--accent);" onclick="exportCurrentNotebook()">📤 Експорт JSON</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="createOverlay" onclick="closeAllModals()">
+        <div class="modal-content hand-drawn-border" onclick="event.stopPropagation()">
+            <span class="close-x" onclick="closeAllModals()">✖</span>
+            <h2>Новий блокнот</h2>
+            <button class="anki-button" onclick="addNotebook(false)">📝 Чистий блокнот</button>
+            <button class="anki-button" style="background-color:var(--anki-green); color:white;" onclick="document.getElementById('syncFileInput').click()">🔗 Прив'язати JSON</button>
+            <input type="file" id="syncFileInput" style="display:none" accept=".json" onchange="addNotebookWithFile(event)">
+        </div>
+    </div>
+
+    <footer style="text-align:center; padding: 20px; font-size: 0.9rem; color: var(--border-color); opacity: 0.8;">
+        © <span id="currentYear"></span> Mykhailo Anisimov
+    </footer>
+
+    <script src="app.js"></script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('sw.js')
+                    .then(reg => console.log('SW registered!', reg))
+                    .catch(err => console.log('SW registration failed', err));
+            });
+        }
+    </script>
+</body>
+</html>
