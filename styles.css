@@ -4,7 +4,9 @@
     --anki-orange: #e67e22; --anki-blue: #3498db; --anki-green: #2ecc71;
     --input-bg: rgba(0,0,0,0.05);
 }
+
 * { box-sizing: border-box; }
+
 [data-theme="dark"] {
     --bg-color: #2c3e50; --text-color: #ecf0f1; --border-color: #ecf0f1;
     --card-bg: #34495e; --accent: #f1c40f;
@@ -29,7 +31,6 @@ footer { margin-top: auto; }
     box-shadow: 5px 5px 0px var(--border-color);
 }
 
-/* Стилізований прогрес-бар у стилі Hand-Drawn */
 .progress-container { 
     width: 80%; 
     background: var(--input-bg); 
@@ -49,6 +50,7 @@ footer { margin-top: auto; }
     background-image: linear-gradient(45deg, rgba(255,255,255,.2) 25%, transparent 25%, transparent 50%, rgba(255,255,255,.2) 50%, rgba(255,255,255,.2) 75%, transparent 75%, transparent);
     background-size: 15px 15px;
 }
+
 .counter-text { font-size: 1.1rem; font-weight: bold; margin-bottom: 5px; opacity: 0.8; }
 
 header { width: 100%; max-width: 800px; display: flex; justify-content: center; gap: 20px; align-items: center; margin-bottom: 40px; }
@@ -65,21 +67,6 @@ h1 { font-family: 'Indie Flower', cursive; font-size: 2rem; margin: 0; }
     -webkit-tap-highlight-color: transparent;
 }
 
-@media (max-width: 600px) {
-    body { padding: 10px; }
-    .shelf { 
-        grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); 
-        gap: 12px; 
-        padding: 10px;
-    }
-    .notebook { width: 100%; }
-    .notebook-cover { height: 100px; font-size: 0.9rem; padding: 8px; }
-    .flashcard { min-height: 250px; }
-    .txt-code, .txt-en { font-size: 1.5rem; }
-    .txt-ua, .txt-trans { font-size: 1rem; }
-}
-
-/* Unsupported browser: hide all voice UI permanently */
 .no-speech .mic-btn,
 .no-speech .speech-input,
 .no-speech #speechPanel,
@@ -131,7 +118,6 @@ h1 { font-family: 'Indie Flower', cursive; font-size: 2rem; margin: 0; }
     margin: 8px 0; display: flex; align-items: center; justify-content: center; gap: 10px;
 }
 
-/* SPEECH PANEL STYLES - NEW ROUND PTT */
 .speech-panel { display: flex; flex-direction: column; gap: 12px; width: 100%; max-width: 400px; margin-top: 8px; align-items: center; }
 .ptt-container { position: relative; width: 100%; display: flex; justify-content: center; align-items: center; height: 100px; }
 .audio-canvas { width: 100%; height: 100%; background: transparent; border-radius: 15px; display: block; border: 1px solid rgba(0,0,0,0.05); }
@@ -182,3 +168,18 @@ h1 { font-family: 'Indie Flower', cursive; font-size: 2rem; margin: 0; }
 .filter-group { display: flex; gap: 10px; margin-bottom: 20px; width: 100%; }
 .filter-btn { flex: 1; padding: 12px; border: 2px solid var(--border-color); border-radius: 12px; background: none; cursor: pointer; font-family: 'Gochi Hand'; color: var(--text-color); font-size: 1.1rem; }
 .filter-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
+
+/* ПЕРЕНЕСЕНО В КІНЕЦЬ ДЛЯ КОРЕКТНОЇ РОБОТИ НА МОБІЛЬНИХ */
+@media (max-width: 600px) {
+    body { padding: 10px; }
+    .shelf { 
+        grid-template-columns: repeat(4, 1fr); 
+        gap: 8px; 
+        padding: 5px;
+    }
+    .notebook { width: 100% !important; }
+    .notebook-cover { height: 80px; font-size: 0.75rem; padding: 5px; }
+    .flashcard { min-height: 250px; }
+    .txt-code, .txt-en { font-size: 1.3rem; }
+    .txt-ua, .txt-trans { font-size: 0.9rem; }
+}
