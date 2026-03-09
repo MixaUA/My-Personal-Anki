@@ -17,8 +17,10 @@ html, body { -ms-overflow-style: none; scrollbar-width: none; overflow-x: hidden
 body {
     font-family: 'Gochi Hand', cursive; background-color: var(--bg-color);
     color: var(--text-color); transition: 0.3s; margin: 0; padding: 20px;
-    display: flex; flex-direction: column; align-items: center; min-height: 100vh;
+    display: flex; flex-direction: column; align-items: center; min-height: 100dvh;
 }
+
+footer { margin-top: auto; }
 
 .hand-drawn-border {
     border: 2px solid var(--border-color);
@@ -70,7 +72,6 @@ h1 { font-family: 'Indie Flower', cursive; font-size: 2rem; margin: 0; }
     .flashcard { min-height: 250px; }
     .txt-code, .txt-en { font-size: 1.5rem; }
     .txt-ua, .txt-trans { font-size: 1rem; }
-    #settingsOverlay .filter-group { display: none; }
 }
 
 .shelf { 
