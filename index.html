@@ -23,8 +23,18 @@
     <header>
         <h1>My Personal Anki</h1>
         <div class="top-menu">
-            <div class="top-btn" onclick="openModal('settingsOverlay')">⚙️</div>
-            <div class="top-btn" onclick="toggleTheme()">🌓</div>
+            <div class="top-btn" onclick="openModal('createOverlay')" title="Додати блокнот">
+                <svg class="svg-icon plus-icon" viewBox="0 0 24 24"><path d="M10 2h4v8h8v4h-8v8h-4v-8h-8v-4h8z"/></svg>
+            </div>
+            <div class="top-btn" onclick="openModal('settingsOverlay')" title="Голос">
+                <svg class="svg-icon" viewBox="0 0 24 24">
+                    <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z"/>
+                </svg>
+            </div>
+            <div class="top-btn" id="themeBtn" onclick="toggleTheme()" title="Тема">
+                <svg class="svg-icon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+            </div>
         </div>
     </header>
 
@@ -41,13 +51,16 @@
             <div class="flashcard-container" onclick="flipCard()">
                 <div class="flashcard" id="mainCard">
                     <div class="card-face hand-drawn-border">
+                        <span class="card-hint">Клікніть, щоб перевернути</span>
                         <div class="txt-ua" id="cardUA">Переклад</div>
                         <div class="txt-code" id="cardCode">CODE</div>
                     </div>
                     <div class="card-face card-back hand-drawn-border">
                         <div class="txt-en" id="cardEN">Original</div>
                         <div class="txt-trans" id="cardTrans">[transcription]</div>
-                        <button class="btn-speaker" onclick="event.stopPropagation(); speakCurrentCard();">🔊</button>
+                        <button class="btn-speaker" onclick="event.stopPropagation(); speakCurrentCard();">
+                            <svg class="svg-icon" style="width:20px; height:20px;" viewBox="0 0 24 24"><path d="M11 5L6 9H2V15H6L11 19V5Z"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+                        </button>
                     </div>
                 </div>
             </div>
@@ -55,7 +68,14 @@
             <div id="speechPanel" class="speech-panel">
                 <div class="ptt-container">
                     <canvas class="audio-canvas"></canvas>
-                    <button class="mic-btn round-mic">🎙️</button>
+                    <button class="mic-btn round-mic">
+                        <svg class="svg-icon" style="width:32px; height:32px;" viewBox="0 0 24 24">
+                            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                            <line x1="12" y1="19" x2="12" y2="23"/>
+                            <line x1="8" y1="23" x2="16" y2="23"/>
+                        </svg>
+                    </button>
                 </div>
                 <input type="text" class="speech-input admin-input" placeholder="Press and Hold to Speak..." readonly style="width: 100%; border:none; background:var(--input-bg); text-align:center;">
             </div>
@@ -68,7 +88,6 @@
                     <button class="anki-button btn-grade" style="color:var(--anki-green); border-color:var(--anki-green)" onclick="gradeCard(4)">Легко</button>
                 </div>
             </div>
-            <div id="hintText" style="opacity: 0.6; font-size: 0.9rem; margin-top: 10px;">Клікніть, щоб перевернути</div>
         </div>
     </div>
 
@@ -99,10 +118,17 @@
                 </div>
 
                 <!-- Live Tuning Panel (Minimal) -->
-                <div class="speech-panel" style="margin-bottom: 20px; border-top: 1px dashed var(--border-color); padding-top: 15px;">
+                <div class="speech-panel" style="margin-bottom: 20px;">
                     <div class="ptt-container">
                         <canvas class="audio-canvas" style="height:120px;"></canvas>
-                        <button class="mic-btn round-mic" style="width:70px; height:70px; font-size:2rem;">🎙️</button>
+                        <button class="mic-btn round-mic" style="width:70px; height:70px; font-size:2rem;">
+                            <svg class="svg-icon" style="width:32px; height:32px;" viewBox="0 0 24 24">
+                                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                                <line x1="12" y1="19" x2="12" y2="23"/>
+                                <line x1="8" y1="23" x2="16" y2="23"/>
+                            </svg>
+                        </button>
                     </div>
                     <input type="text" class="speech-input admin-input" placeholder="Voice testing..." readonly style="width: 100%; text-align:center; background:none; border:none;">
                 </div>
@@ -141,9 +167,21 @@
         <div class="modal-content hand-drawn-border" onclick="event.stopPropagation()">
             <span class="close-x" onclick="closeAllModals()">✖</span>
             <h2>Новий блокнот</h2>
-            <button class="anki-button" onclick="addNotebook(false)">📝 Чистий блокнот</button>
+            <button class="anki-button" onclick="addNotebook(false)">📝 Створити блокнот</button>
             <button class="anki-button" style="background-color:var(--anki-green); color:white;" onclick="document.getElementById('syncFileInput').click()">🔗 Прив'язати JSON</button>
             <input type="file" id="syncFileInput" style="display:none" accept=".json" onchange="addNotebookWithFile(event)">
+        </div>
+    </div>
+
+    <!-- Dialog Overlay -->
+    <div class="modal-overlay" id="dialogOverlay" style="z-index: 1000;" onclick="app.handleDialog(false)">
+        <div class="modal-content hand-drawn-border dialog-modal" onclick="event.stopPropagation()">
+            <p id="dialogMessage" style="font-size: 1.2rem; margin-bottom: 20px; white-space: pre-wrap; font-family: 'Gochi Hand';"></p>
+            <input type="text" id="dialogInput" class="admin-input" style="display:none; margin-bottom: 20px; width: 100%;" placeholder="">
+            <div class="training-controls" style="justify-content: center; gap: 20px;">
+                <button id="dialogCancel" class="anki-button" style="color:var(--anki-red); border-color:var(--anki-red); background: none;" onclick="app.handleDialog(false)">Скасувати</button>
+                <button id="dialogOk" class="anki-button" style="background-color:var(--anki-green); color:white;" onclick="app.handleDialog(true)">OK</button>
+            </div>
         </div>
     </div>
 
