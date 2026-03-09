@@ -31,50 +31,43 @@ const SpeechEngine = {
     isStreamActive: false,
     isEngineRunning: false,
     isPTTActive: false,
-    isRestarting: false,   // Android: prevents overlapping restart attempts
+    pseudoWaveActive: 0,
     sessionTranscript: "",
 
-    init() {
-        if (this.recognition) return;
+    // Check Speech API support
+    isSupported() {
+        return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+    },
+
+    // Create a fresh SpeechRecognition — called every time recording starts
+    _createRecognition() {
         const SpeechReq = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (!SpeechReq) {
-            document.querySelectorAll('.mic-btn').forEach(btn => {
-                btn.disabled = true;
-                btn.title = "Мікрофон підтримується лише у Chrome / Edge";
-            });
-            document.querySelectorAll('.speech-input').forEach(i =>
-                i.placeholder = "🚫 Додаток не підтримує цю функцію. Використовуйте Chrome або Edge."
-            );
-            return;
-        }
+        const rec = new SpeechReq();
+        rec.lang = 'en-US';
+        rec.continuous = false;
+        rec.interimResults = true;
+        rec.maxAlternatives = 1;
 
-        this.recognition = new SpeechReq();
-        this.recognition.lang = 'en-US';
-        this.recognition.interimResults = true;
-        this.recognition.maxAlternatives = 1;
-        this.recognition.continuous = false; // false on all platforms — we manage restart manually
+        rec.onstart = () => {
+            this.isEngineRunning = true;
+            console.log('Recognition: START');
+        };
 
-        this.recognition.onresult = (e) => {
+        rec.onresult = (e) => {
             if (!this.isPTTActive) return;
-
-            // Trigger pseudo-wave spike when speech detected (fallback for Android)
             this.pseudoWaveActive = 15;
-
-            let finalText = "";
-            let interimText = "";
+            let finalText = '', interimText = '';
             for (let i = 0; i < e.results.length; i++) {
                 const t = e.results[i][0].transcript.trim();
-                if (e.results[i].isFinal) finalText += t + " ";
+                if (e.results[i].isFinal) finalText += t + ' ';
                 else interimText += t;
             }
             if (finalText) this.sessionTranscript += finalText;
             const display = (this.sessionTranscript + interimText).trim();
-
             document.querySelectorAll('.speech-input').forEach(input => {
                 input.value = display;
                 input.style.color = '';
             });
-
             clearTimeout(this.silenceTimer);
             if (display.length > 0) {
                 this.silenceTimer = setTimeout(() => {
@@ -83,94 +76,59 @@ const SpeechEngine = {
             }
         };
 
-        this.recognition.onstart = () => {
-            this.isEngineRunning = true;
-            this.isRestarting = false;
-            console.log("Recognition: START");
-
-            // Android Variant 3: try AudioContext AFTER recognition has grabbed the mic
-            // Small delay gives recognition time to fully acquire hardware
-            const isAndroid = /android/i.test(navigator.userAgent);
-            if (isAndroid && !this.audioContext) {
-                setTimeout(() => this.tryAndroidAudioContext(), 300);
-            }
-        };
-
-        this.recognition.onend = () => {
+        rec.onend = () => {
             this.isEngineRunning = false;
-            console.log("Recognition: END");
-
-            if (this.isPTTActive && this.isStreamActive && !this.isRestarting) {
-                this.isRestarting = true;
+            console.log('Recognition: END');
+            // Auto-restart while user is still recording
+            if (this.isPTTActive) {
                 setTimeout(() => {
-                    this.isRestarting = false;
                     if (this.isPTTActive && !this.isEngineRunning) {
-                        try { this.recognition.start(); }
-                        catch(e) { console.warn("Restart failed:", e); }
+                        this.recognition = this._createRecognition();
+                        try { this.recognition.start(); } catch(e) { console.warn('Restart failed:', e); }
                     }
                 }, 250);
             }
         };
 
-        this.recognition.onerror = (e) => {
+        rec.onerror = (e) => {
             this.isEngineRunning = false;
-            this.isRestarting = false;
             if (e.error === 'no-speech') return;
-            console.warn("Recognition error:", e.error);
+            console.warn('Recognition error:', e.error);
             if (this.isPTTActive && (e.error === 'network' || e.error === 'aborted')) {
                 setTimeout(() => {
-                    if (!this.isEngineRunning && this.isPTTActive) {
+                    if (this.isPTTActive && !this.isEngineRunning) {
+                        this.recognition = this._createRecognition();
                         try { this.recognition.start(); } catch(err) {}
                     }
                 }, 500);
             }
         };
+
+        return rec;
     },
 
-    // Wake up AudioContext + mic stream (once per training session)
-    async wakeUpHardware() {
-        if (this.isStreamActive) return true;
-
-        // Android: getUserMedia conflicts with SpeechRecognition — both cannot share mic
-        // Skip AudioContext/visualizer on Android, just mark stream as active
-        // init() already called at startup, no need to call again
-        const isAndroid = /android/i.test(navigator.userAgent);
-        if (isAndroid) {
-            this.isStreamActive = true;
-            return true;
-        }
-
+    // Desktop only: wake up AudioContext + mic visualizer
+    async _startVisualizer() {
+        if (this.isStreamActive) return;
         try {
             this.stream = await navigator.mediaDevices.getUserMedia({
-                audio: {
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                    autoGainControl: true
-                }
+                audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
             });
-
             this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-
-            if (this.audioContext.state === 'suspended') {
-                await this.audioContext.resume();
-            }
-
+            if (this.audioContext.state === 'suspended') await this.audioContext.resume();
             const source = this.audioContext.createMediaStreamSource(this.stream);
             this.analyser = this.audioContext.createAnalyser();
             this.analyser.fftSize = 256;
             this.audioDataArray = new Uint8Array(this.analyser.frequencyBinCount);
             source.connect(this.analyser);
             this.isStreamActive = true;
-            this.init();
             this.draw();
-            return true;
-        } catch (e) {
-            console.error("Microphone error:", e);
+        } catch(e) {
+            console.warn('Visualizer error:', e);
             const msg = (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError')
-                ? "🚫 Дозвіл на мікрофон відхилено. Натисни 🔒 в адресному рядку → Дозволи → Мікрофон"
-                : "🚫 Немає доступу до мікрофону";
+                ? '🚫 Дозвіл на мікрофон відхилено. Натисни 🔒 → Дозволи → Мікрофон'
+                : '🚫 Немає доступу до мікрофону';
             document.querySelectorAll('.speech-input').forEach(i => i.placeholder = msg);
-            return false;
         }
     },
 
@@ -181,156 +139,54 @@ const SpeechEngine = {
             return;
         }
 
-        // Immediate visual feedback
+        if (!this.isSupported()) return;
+
+        // Visual feedback
         this.isPTTActive = true;
-        this.isRestarting = false;
-        this.sessionTranscript = "";
+        this.sessionTranscript = '';
         clearTimeout(this.silenceTimer);
         document.querySelectorAll('.mic-btn').forEach(btn => btn.classList.add('mic-active'));
         document.querySelectorAll('.speech-input').forEach(i => {
-            i.value = "";
-            i.placeholder = "Підключення... 🎙️";
+            i.value = '';
+            i.placeholder = 'Слухаю...';
         });
-
-        const ok = await this.wakeUpHardware();
-        if (!ok) {
-            this.isPTTActive = false;
-            document.querySelectorAll('.mic-btn').forEach(btn => btn.classList.remove('mic-active'));
-            return;
-        }
-
-        document.querySelectorAll('.speech-input').forEach(i => i.placeholder = "Слухаю...");
 
         const isAndroid = /android/i.test(navigator.userAgent);
 
-        if (isAndroid) {
-            // Android: create fresh SpeechRecognition every time — same pattern as debug button
-            // Reusing the same object causes silent failures on Android Chrome
-            const SpeechReq = window.SpeechRecognition || window.webkitSpeechRecognition;
-            const rec = new SpeechReq();
-            rec.lang = 'en-US';
-            rec.continuous = false;
-            rec.interimResults = true;
-            rec.maxAlternatives = 1;
-
-            rec.onstart = () => {
-                this.isEngineRunning = true;
-                this.isRestarting = false;
-                if (!this.audioContext) setTimeout(() => this.tryAndroidAudioContext(), 300);
-            };
-
-            rec.onresult = (e) => {
-                if (!this.isPTTActive) return;
-                this.pseudoWaveActive = 15;
-                let finalText = "", interimText = "";
-                for (let i = 0; i < e.results.length; i++) {
-                    const t = e.results[i][0].transcript.trim();
-                    if (e.results[i].isFinal) finalText += t + " ";
-                    else interimText += t;
-                }
-                if (finalText) this.sessionTranscript += finalText;
-                const display = (this.sessionTranscript + interimText).trim();
-                document.querySelectorAll('.speech-input').forEach(input => {
-                    input.value = display;
-                    input.style.color = '';
-                });
-                clearTimeout(this.silenceTimer);
-                if (display.length > 0) {
-                    this.silenceTimer = setTimeout(() => {
-                        if (this.isPTTActive) this.stopRecording();
-                    }, speechSettings.silenceTimeout * 1000);
-                }
-            };
-
-            rec.onend = () => {
-                this.isEngineRunning = false;
-                if (this.isPTTActive && !this.isRestarting) {
-                    this.isRestarting = true;
-                    setTimeout(() => {
-                        this.isRestarting = false;
-                        if (this.isPTTActive && !this.isEngineRunning) {
-                            // Create another fresh object for restart
-                            this.sessionTranscript = this.sessionTranscript || "";
-                            try {
-                                const SpeechReq2 = window.SpeechRecognition || window.webkitSpeechRecognition;
-                                const rec2 = new SpeechReq2();
-                                rec2.lang = 'en-US';
-                                rec2.continuous = false;
-                                rec2.interimResults = true;
-                                rec2.maxAlternatives = 1;
-                                rec2.onstart  = rec.onstart;
-                                rec2.onresult = rec.onresult;
-                                rec2.onend    = rec.onend;
-                                rec2.onerror  = rec.onerror;
-                                this.recognition = rec2;
-                                rec2.start();
-                            } catch(e) { console.warn("Android restart failed:", e); }
-                        }
-                    }, 250);
-                }
-            };
-
-            rec.onerror = (e) => {
-                this.isEngineRunning = false;
-                this.isRestarting = false;
-                if (e.error === 'no-speech') return;
-                console.warn("Android recognition error:", e.error);
-            };
-
-            this.recognition = rec;
-            try { rec.start(); } catch(e) { console.warn("Android rec start failed:", e); }
-
-            // Start draw loop for pseudo-wave
-            if (!this.animationId) this.draw();
-
+        if (!isAndroid) {
+            // Desktop: start visualizer first, then recognition
+            await this._startVisualizer();
         } else {
-            // Desktop: reuse existing recognition object with watchdog restart
-            if (!this.isEngineRunning) {
-                try { this.recognition.start(); } catch(e) {}
-            }
+            // Android: start draw loop for pseudo-wave immediately
+            this.isStreamActive = true;
+            if (!this.animationId) this.draw();
+        }
+
+        // Start recognition — fresh object every time (same as debug button)
+        this.recognition = this._createRecognition();
+        try {
+            this.recognition.start();
+        } catch(e) {
+            console.warn('Recognition start failed:', e);
+            this.isPTTActive = false;
+            document.querySelectorAll('.mic-btn').forEach(btn => btn.classList.remove('mic-active'));
         }
     },
 
     stopRecording() {
         if (!this.isPTTActive) return;
         this.isPTTActive = false;
-        this.isRestarting = false;
         clearTimeout(this.silenceTimer);
         document.querySelectorAll('.mic-btn').forEach(btn => btn.classList.remove('mic-active'));
-        document.querySelectorAll('.speech-input').forEach(i => i.placeholder = "Натисни для запису...");
+        document.querySelectorAll('.speech-input').forEach(i => i.placeholder = 'Натисни для запису...');
 
-        // Stop current session; onend will NOT restart because isPTTActive=false
         if (this.isEngineRunning) try { this.recognition.stop(); } catch(e) {}
 
         // Process answer if in training mode
         const isTraining = document.getElementById('trainingOverlay').style.display === 'flex';
         if (isTraining) {
             const sInput = document.querySelector('.speech-input');
-            if (sInput && sInput.value.trim() !== "") checkVoiceAnswer();
-        }
-    },
-
-    // Android Variant 3: attempt AudioContext after SpeechRecognition has started
-    // If it works — real waveform. If not — pseudo-wave fallback kicks in via draw()
-    async tryAndroidAudioContext() {
-        try {
-            this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            if (this.audioContext.state === 'suspended') await this.audioContext.resume();
-            const source = this.audioContext.createMediaStreamSource(this.stream);
-            this.analyser = this.audioContext.createAnalyser();
-            this.analyser.fftSize = 256;
-            this.audioDataArray = new Uint8Array(this.analyser.frequencyBinCount);
-            source.connect(this.analyser);
-            console.log("Android AudioContext: real waveform active ✓");
-            if (!this.animationId) this.draw();
-        } catch(e) {
-            // Mic conflict — SpeechRecognition holds it, AudioContext can't get in
-            // Fallback: pseudo-wave driven by interim results will animate instead
-            console.log("Android AudioContext: mic conflict, using pseudo-wave fallback");
-            this.audioContext = null;
-            this.audioDataArray = null;
-            if (!this.animationId) this.draw();
+            if (sInput && sInput.value.trim() !== '') checkVoiceAnswer();
         }
     },
 
@@ -339,39 +195,29 @@ const SpeechEngine = {
         if (canvases.length === 0) return;
 
         if (this.audioDataArray) {
-            // Real waveform — AudioContext available
             this.analyser.getByteFrequencyData(this.audioDataArray);
         }
 
         let maxVol = 0;
         if (this.audioDataArray) {
-            // Real audio data
             maxVol = Math.max(...this.audioDataArray);
         } else if (this.isPTTActive && this.isEngineRunning) {
-            // Pseudo-wave fallback: animate based on time + speech activity
-            // Creates natural-looking oscillation while recording
+            // Pseudo-wave for Android — oscillates naturally, spikes on speech
             const t = Date.now() / 200;
-            const base = this.pseudoWaveActive ? 140 : 30;
+            const base = this.pseudoWaveActive > 0 ? 140 : 30;
             maxVol = base + Math.sin(t) * 40 + Math.sin(t * 2.3) * 25 + Math.sin(t * 0.7) * 20;
-            // Decay pseudo activity
-            if (this.pseudoWaveActive) {
-                this.pseudoWaveActive = Math.max(0, (this.pseudoWaveActive || 0) - 1);
-            }
+            if (this.pseudoWaveActive > 0) this.pseudoWaveActive--;
         }
 
         const actualThreshold = 100 + speechSettings.noiseThreshold;
 
-        // Button disabled only at the very first startup moment, not during restarts
-        const starting = this.isPTTActive && !this.isEngineRunning && this.isStreamActive && !this.isRestarting;
+        const starting = this.isPTTActive && !this.isEngineRunning && this.isStreamActive;
         document.querySelectorAll('.mic-btn').forEach(btn => btn.disabled = starting);
         document.querySelectorAll('.speech-input').forEach(input => {
-            if (!this.isPTTActive) {
-                input.placeholder = "Tap to Speak...";
-            }
+            if (!this.isPTTActive) input.placeholder = 'Tap to Speak...';
         });
 
         let displayVal = (maxVol > actualThreshold) ? maxVol : 0;
-
         this.visualData.push(displayVal);
         this.visualData.shift();
 
@@ -379,55 +225,42 @@ const SpeechEngine = {
             const ctx = canvas.getContext('2d');
             const rect = canvas.getBoundingClientRect();
             if (rect.width === 0 || rect.height === 0) return;
-
             if (canvas.width !== rect.width * devicePixelRatio) {
                 canvas.width = rect.width * devicePixelRatio;
                 canvas.height = rect.height * devicePixelRatio;
                 ctx.scale(devicePixelRatio, devicePixelRatio);
             }
-
-            const W = rect.width;
-            const H = rect.height;
+            const W = rect.width, H = rect.height;
             ctx.clearRect(0, 0, W, H);
-
             ctx.beginPath();
-
             if (this.isStreamActive && !this.isEngineRunning) {
-                ctx.strokeStyle = '#e74c3c';
-                ctx.setLineDash([2, 4]);
-                ctx.lineWidth = 2;
+                ctx.strokeStyle = '#e74c3c'; ctx.setLineDash([2, 4]); ctx.lineWidth = 2;
             } else {
                 ctx.strokeStyle = this.isPTTActive ? '#1a1a1a' : '#cccccc';
                 ctx.lineWidth = this.isPTTActive ? 3 : 1.5;
                 ctx.setLineDash([]);
             }
-
             ctx.lineJoin = 'round';
-
-            for(let i=0; i < this.visualData.length; i++) {
+            for (let i = 0; i < this.visualData.length; i++) {
                 const x = (W / this.visualData.length) * i;
                 const val = this.visualData[i];
                 const h = (val / 255) * H;
                 const y = (H - h) / 2;
-
-                if(i === 0) ctx.moveTo(x, H / 2);
+                if (i === 0) ctx.moveTo(x, H / 2);
                 else {
                     if (val > 0) ctx.lineTo(x, y + (i % 2 === 0 ? h : 0));
                     else ctx.lineTo(x, H / 2);
                 }
             }
             ctx.stroke();
-
             const thresholdH = (actualThreshold / 255) * H;
             const thresholdYTop = (H - thresholdH) / 2;
             const thresholdYBottom = (H + thresholdH) / 2;
             ctx.beginPath();
-            ctx.strokeStyle = '#ff0000';
-            ctx.setLineDash([5, 5]);
+            ctx.strokeStyle = '#ff0000'; ctx.setLineDash([5, 5]);
             ctx.moveTo(0, thresholdYTop); ctx.lineTo(W, thresholdYTop);
             ctx.moveTo(0, thresholdYBottom); ctx.lineTo(W, thresholdYBottom);
-            ctx.stroke();
-            ctx.setLineDash([]);
+            ctx.stroke(); ctx.setLineDash([]);
         });
 
         if (this.isStreamActive || this.isPTTActive) {
@@ -439,18 +272,17 @@ const SpeechEngine = {
 
     killAll() {
         this.isPTTActive = false;
-        this.isRestarting = false;
         if (this.recognition) try { this.recognition.stop(); } catch(e) {}
         this.isStreamActive = false;
-        if(this.stream) this.stream.getTracks().forEach(t => t.stop());
-        if(this.audioContext && this.audioContext.state !== 'closed') this.audioContext.close();
+        if (this.stream) this.stream.getTracks().forEach(t => t.stop());
+        if (this.audioContext && this.audioContext.state !== 'closed') this.audioContext.close();
         cancelAnimationFrame(this.animationId);
         this.animationId = null;
     },
 
     levenshtein(a, b) {
         if (!a || !b) return 99;
-        const clean = s => s.toLowerCase().trim().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g,"");
+        const clean = s => s.toLowerCase().trim().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, '');
         const s1 = clean(a), s2 = clean(b);
         const m = [];
         for (let i = 0; i <= s1.length; i++) m[i] = [i];
@@ -800,9 +632,6 @@ window.app = {
 speechSynthesis.onvoiceschanged = populateVoices;
 populateVoices();
 setTimeout(populateVoices, 1000);
-
-// Init recognition engine immediately so it's ready before first mic tap
-SpeechEngine.init();
 
 renderShelf();
 initPTT();
