@@ -700,4 +700,129 @@ if ('serviceWorker' in navigator) {
             window.location.reload();
         });
     });
+
+
+
+
+
+
+
+// ============================================================
+// ANDROID ДІАГНОСТИКА — вставити ТИМЧАСОВО в кінець script.js
+// Після діагностики — видалити цей блок
+// ============================================================
+
+(function() {
+    // Створюємо плаваючий лог-блок
+    const log = document.createElement('div');
+    log.id = 'androidDebug';
+    log.style.cssText = `
+        position: fixed; bottom: 0; left: 0; right: 0; z-index: 99999;
+        background: rgba(0,0,0,0.92); color: #00ff88; font-size: 11px;
+        font-family: monospace; padding: 8px; max-height: 45vh;
+        overflow-y: auto; border-top: 2px solid #00ff88;
+    `;
+    document.body.appendChild(log);
+
+    function dbg(msg, color) {
+        const line = document.createElement('div');
+        line.style.color = color || '#00ff88';
+        line.textContent = '[' + new Date().toISOString().slice(11,19) + '] ' + msg;
+        log.appendChild(line);
+        log.scrollTop = log.scrollHeight;
+        console.log('[DBG]', msg);
+    }
+
+    // Кнопка закрити
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = '✕ закрити лог';
+    closeBtn.style.cssText = 'position:absolute;top:4px;right:4px;background:#333;color:#fff;border:none;padding:2px 8px;font-size:11px;cursor:pointer;';
+    closeBtn.onclick = () => log.remove();
+    log.appendChild(closeBtn);
+
+    // --- 1. Базова підтримка API ---
+    dbg('=== ДІАГНОСТИКА СТАРТ ===', '#ffff00');
+    dbg('SpeechRecognition: ' + !!(window.SpeechRecognition || window.webkitSpeechRecognition), 
+        (window.SpeechRecognition || window.webkitSpeechRecognition) ? '#00ff88' : '#ff4444');
+    dbg('speechSynthesis: ' + !!window.speechSynthesis,
+        window.speechSynthesis ? '#00ff88' : '#ff4444');
+    dbg('getUserMedia: ' + !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
+        (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) ? '#00ff88' : '#ff4444');
+    dbg('AudioContext: ' + !!(window.AudioContext || window.webkitAudioContext),
+        (window.AudioContext || window.webkitAudioContext) ? '#00ff88' : '#ff4444');
+    dbg('Protocol: ' + location.protocol, location.protocol === 'https:' ? '#00ff88' : '#ff4444');
+    dbg('UserAgent: ' + navigator.userAgent.slice(0, 80), '#aaaaaa');
+
+    // --- 2. Голоси TTS ---
+    function checkVoices() {
+        const voices = speechSynthesis.getVoices();
+        dbg('Voices total: ' + voices.length, voices.length > 0 ? '#00ff88' : '#ff9900');
+        const enVoices = voices.filter(v => v.lang.startsWith('en'));
+        dbg('EN voices: ' + enVoices.length + (enVoices.length > 0 ? ' → ' + enVoices[0].name : ''),
+            enVoices.length > 0 ? '#00ff88' : '#ff4444');
+    }
+    checkVoices();
+    speechSynthesis.onvoiceschanged = () => { dbg('onvoiceschanged fired!', '#ffff00'); checkVoices(); };
+    setTimeout(() => { dbg('--- voices check @1s ---', '#888888'); checkVoices(); }, 1000);
+    setTimeout(() => { dbg('--- voices check @3s ---', '#888888'); checkVoices(); }, 3000);
+
+    // --- 3. Тест TTS одразу ---
+    setTimeout(() => {
+        dbg('Спроба speakText("test")...', '#ffff00');
+        try {
+            const u = new SpeechSynthesisUtterance('test');
+            const voices = speechSynthesis.getVoices();
+            const v = voices.find(x => x.lang.startsWith('en'));
+            if (v) { u.voice = v; dbg('Голос: ' + v.name, '#00ff88'); }
+            else dbg('Голос не знайдено, використовую default', '#ff9900');
+            speechSynthesis.speak(u);
+            u.onstart = () => dbg('TTS: onstart ✓', '#00ff88');
+            u.onend = () => dbg('TTS: onend ✓', '#00ff88');
+            u.onerror = (e) => dbg('TTS ERROR: ' + e.error, '#ff4444');
+        } catch(e) {
+            dbg('TTS exception: ' + e.message, '#ff4444');
+        }
+    }, 1500);
+
+    // --- 4. Перехоплення мікрофону ---
+    // Патчимо toggleRecording щоб логувати
+    const origToggle = SpeechEngine.toggleRecording.bind(SpeechEngine);
+    SpeechEngine.toggleRecording = async function() {
+        dbg('toggleRecording() викликано', '#ffff00');
+        dbg('isPTTActive before: ' + this.isPTTActive, '#aaaaaa');
+        dbg('isStreamActive: ' + this.isStreamActive, '#aaaaaa');
+        dbg('isEngineRunning: ' + this.isEngineRunning, '#aaaaaa');
+        await origToggle();
+        setTimeout(() => {
+            dbg('isPTTActive after: ' + this.isPTTActive, '#aaaaaa');
+            dbg('isStreamActive after: ' + this.isStreamActive, '#aaaaaa');
+            dbg('isEngineRunning after: ' + this.isEngineRunning, '#aaaaaa');
+        }, 800);
+    };
+
+    // Патчимо recognition події якщо вже ініціалізовано
+    setTimeout(() => {
+        if (SpeechEngine.recognition) {
+            const origOnStart = SpeechEngine.recognition.onstart;
+            const origOnEnd = SpeechEngine.recognition.onend;
+            const origOnError = SpeechEngine.recognition.onerror;
+            const origOnResult = SpeechEngine.recognition.onresult;
+
+            SpeechEngine.recognition.onstart = (e) => { dbg('🎙 recognition.onstart', '#00ff88'); if(origOnStart) origOnStart(e); };
+            SpeechEngine.recognition.onend = (e) => { dbg('🔴 recognition.onend', '#ff9900'); if(origOnEnd) origOnEnd(e); };
+            SpeechEngine.recognition.onerror = (e) => { dbg('❌ recognition.onerror: ' + e.error, '#ff4444'); if(origOnError) origOnError(e); };
+            SpeechEngine.recognition.onresult = (e) => { 
+                dbg('📝 result: ' + e.results[0][0].transcript, '#00ffff'); 
+                if(origOnResult) origOnResult(e); 
+            };
+            dbg('Recognition handlers патчено ✓', '#00ff88');
+        } else {
+            dbg('recognition == null після 500ms!', '#ff4444');
+        }
+    }, 500);
+
+    dbg('Діагностику підключено. Натисни мікрофон.', '#ffff00');
+})();
+
+
 }
