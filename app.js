@@ -340,9 +340,13 @@ function handleDialog(success) {
 
 // --- SM-2 LOGIC ---
 
-const LEARNING_STEPS_MIN = [1, 10]; // хвилини: крок 1 → через 1хв, крок 2 → через 10хв
-const EASY_BONUS = 1.3;             // множник для "Легко" (як в Anki за замовчуванням)
-const MIN_EASE = 1.3;               // мінімальний ease-фактор (захист від "ease hell")
+// Learning steps у секундах (Anki default: 1хв, 10хв)
+const LEARNING_STEPS_SEC = [60, 600];
+const EASY_BONUS = 1.3;
+const MIN_EASE = 1.3;
+
+// Таймер очікування між картками
+let waitTimer = null;
 
 async function startTraining() {
     const nb = notebooks[currentIdx];
@@ -352,7 +356,12 @@ async function startTraining() {
     document.getElementById('trainingTitle').innerText = nb.name;
 
     const now = new Date();
-    trainingQueue = nb.rows.filter(card => !card.nextReview || new Date(card.nextReview) <= now);
+    // Включити: нові, готові до review, або ті що в learning (мають reviewAt)
+    trainingQueue = nb.rows.filter(card =>
+        !card.nextReview ||
+        new Date(card.nextReview) <= now ||
+        card.reviewAt
+    );
 
     if(trainingQueue.length === 0) return showDialog({ message: "Все вивчено на сьогодні!" });
 
@@ -365,13 +374,73 @@ async function startTraining() {
 }
 
 function updateProgress() {
-    const left = trainingQueue.length;
+    const left = trainingQueue.filter(c => !c.reviewAt || c.reviewAt <= Date.now()).length;
     const elLeft = document.getElementById('cardsLeft');
     const elProg = document.getElementById('progressBar');
     if (elLeft) elLeft.innerText = left;
     if (elProg) {
         const percent = totalCardsInSession > 0 ? ((totalCardsInSession - left) / totalCardsInSession) * 100 : 0;
         elProg.style.width = percent + '%';
+    }
+}
+
+// Показати екран очікування з зворотнім відліком
+function showWaitScreen() {
+    clearInterval(waitTimer);
+
+    // Знайти картку з найближчим reviewAt
+    const waiting = trainingQueue
+        .filter(c => c.reviewAt && c.reviewAt > Date.now())
+        .sort((a, b) => a.reviewAt - b.reviewAt);
+
+    if (waiting.length === 0) {
+        // Якщо раптом є готові — показати
+        advanceQueue();
+        return;
+    }
+
+    const next = waiting[0];
+    const cardEl = document.getElementById('mainCard');
+    if (cardEl) cardEl.classList.remove('flipped');
+    const act = document.getElementById('trainingActions');
+    if (act) act.style.display = 'none';
+    const sp = document.getElementById('speechPanel');
+    if (sp) sp.style.display = 'none';
+
+    // Показати таймер у полі картки
+    document.getElementById('cardUA').innerText = '⏳';
+    document.getElementById('cardCode').innerText = 'Наступна картка через...';
+    document.getElementById('cardEN').innerText = '';
+    document.getElementById('cardTrans').innerText = '';
+
+    waitTimer = setInterval(() => {
+        const secsLeft = Math.ceil((next.reviewAt - Date.now()) / 1000);
+        if (secsLeft <= 0) {
+            clearInterval(waitTimer);
+            advanceQueue();
+            return;
+        }
+        const m = Math.floor(secsLeft / 60);
+        const s = secsLeft % 60;
+        document.getElementById('cardCode').innerText =
+            m > 0 ? `${m}хв ${s}с` : `${s}с`;
+    }, 500);
+}
+
+// Знайти наступну готову картку або показати очікування
+function advanceQueue() {
+    clearInterval(waitTimer);
+    const now = Date.now();
+    const readyIdx = trainingQueue.findIndex(c => !c.reviewAt || c.reviewAt <= now);
+    if (readyIdx !== -1) {
+        currentCardIdx = readyIdx;
+        updateProgress();
+        showCard();
+    } else if (trainingQueue.length > 0) {
+        showWaitScreen();
+    } else {
+        showDialog({ message: "Чудово! Всі картки засвоєні." });
+        closeAllModals();
     }
 }
 
@@ -385,98 +454,85 @@ function gradeCard(quality) {
     if (!card.interval)                  card.interval = 0;
     if (card.learningStep === undefined) card.learningStep = 0;
 
-    let removeFromQueue = false;
+    const isLearning = card.reps === 0;
 
     if (quality === 1) {
-        // ── ЗНОВУ ── повернути на крок 0, вставити через 5 карток
+        // ── ЗНОВУ ── скинути на step 0, повернути через 1хв
         card.learningStep = 0;
         card.reps = 0;
         card.interval = 0;
         card.ease = Math.max(MIN_EASE, card.ease - 0.20);
-
-        const moved = trainingQueue.splice(currentCardIdx, 1)[0];
-        const insertAt = Math.min(currentCardIdx + 5, trainingQueue.length);
-        trainingQueue.splice(insertAt, 0, moved);
+        card.reviewAt = Date.now() + LEARNING_STEPS_SEC[0] * 1000;
+        // Залишити в черзі, просто оновити reviewAt
+        trainingQueue.splice(currentCardIdx, 1);
+        trainingQueue.push(card);
 
     } else if (quality === 2) {
         // ── ВАЖКО ──
         card.ease = Math.max(MIN_EASE, card.ease - 0.15);
 
-        if (card.reps > 0) {
-            // Graduated-картка: скоротити інтервал ×1.2 і повернути в review
+        if (!isLearning) {
+            // Review: скоротити інтервал ×1.2, вийти з сесії
             card.interval = Math.max(1, Math.round(card.interval * 1.2));
             const d = new Date();
             d.setDate(d.getDate() + card.interval);
             card.nextReview = d.toISOString();
-            removeFromQueue = true;
+            card.reviewAt = null;
+            trainingQueue.splice(currentCardIdx, 1);
         } else {
-            // Ще в learning: вставити через 3 картки
-            const moved = trainingQueue.splice(currentCardIdx, 1)[0];
-            const insertAt = Math.min(currentCardIdx + 3, trainingQueue.length);
-            trainingQueue.splice(insertAt, 0, moved);
+            // Learning: повторити поточний step — через той самий інтервал
+            card.reviewAt = Date.now() + LEARNING_STEPS_SEC[card.learningStep] * 1000;
+            trainingQueue.splice(currentCardIdx, 1);
+            trainingQueue.push(card);
         }
 
     } else if (quality === 3) {
         // ── ДОБРЕ ──
-        if (card.reps === 0) {
-            // Learning: просунути на наступний step
-            card.learningStep = (card.learningStep || 0) + 1;
-
-            if (card.learningStep >= LEARNING_STEPS_MIN.length) {
-                // Graduation: перший реальний інтервал = 1 день
+        if (isLearning) {
+            // Просунути на наступний step
+            card.learningStep++;
+            if (card.learningStep >= LEARNING_STEPS_SEC.length) {
+                // Graduation
                 card.interval = 1;
                 card.reps = 1;
+                card.reviewAt = null;
                 const d = new Date();
                 d.setDate(d.getDate() + card.interval);
                 card.nextReview = d.toISOString();
-                removeFromQueue = true;
+                trainingQueue.splice(currentCardIdx, 1);
             } else {
-                // Наступний learning step:
-                // 1хв ≈ вставити через 2 картки; 10хв ≈ в кінець черги
-                const moved = trainingQueue.splice(currentCardIdx, 1)[0];
-                const insertAt = LEARNING_STEPS_MIN[card.learningStep] <= 1
-                    ? Math.min(currentCardIdx + 2, trainingQueue.length)
-                    : trainingQueue.length;
-                trainingQueue.splice(insertAt, 0, moved);
+                // Наступний step
+                card.reviewAt = Date.now() + LEARNING_STEPS_SEC[card.learningStep] * 1000;
+                trainingQueue.splice(currentCardIdx, 1);
+                trainingQueue.push(card);
             }
         } else {
-            // Review: стандартний SM-2 інтервал
+            // Review: стандартний SM-2
             card.interval = Math.max(1, Math.round(card.interval * card.ease));
             card.reps++;
+            card.reviewAt = null;
             const d = new Date();
             d.setDate(d.getDate() + card.interval);
             card.nextReview = d.toISOString();
-            removeFromQueue = true;
+            trainingQueue.splice(currentCardIdx, 1);
         }
 
     } else if (quality === 4) {
-        // ── ЛЕГКО ── graduation одразу, easy bonus
+        // ── ЛЕГКО ── одразу graduation
         card.ease = Math.min(card.ease + 0.15, 3.5);
-        card.interval = card.reps === 0
+        card.interval = isLearning
             ? 4
             : Math.max(1, Math.round(card.interval * card.ease * EASY_BONUS));
-        card.reps++;
-        card.learningStep = LEARNING_STEPS_MIN.length; // позначити як graduated
+        card.reps = Math.max(card.reps + 1, 1);
+        card.reviewAt = null;
         const d = new Date();
         d.setDate(d.getDate() + card.interval);
         card.nextReview = d.toISOString();
-        removeFromQueue = true;
-    }
-
-    if (removeFromQueue) {
         trainingQueue.splice(currentCardIdx, 1);
-        if (currentCardIdx >= trainingQueue.length) currentCardIdx = 0;
     }
 
     saveData();
-    updateProgress();
-
-    if (trainingQueue.length > 0) {
-        showCard();
-    } else {
-        showDialog({ message: "Чудово! Всі картки засвоєні." });
-        closeAllModals();
-    }
+    advanceQueue();
 }
 
 function toggleTheme() { 
@@ -499,6 +555,7 @@ async function closeAllModals() {
     const isTr = document.getElementById('trainingOverlay').style.display === 'flex';
     if (isTr && trainingQueue.length > 0 && !(await showDialog({ message: "Вийти?", type: 'confirm' }))) return;
 
+    clearInterval(waitTimer);
     SpeechEngine.killAll();
     document.querySelectorAll('.modal-overlay').forEach(m => m.style.display = 'none');
     resetCard();
@@ -681,7 +738,8 @@ function updateFromFile(e) {
 }
 
 function exportCurrentNotebook() {
-    const b = new Blob([JSON.stringify(notebooks[currentIdx].rows, null, 2)], {type: 'application/json'});
+    const clean = notebooks[currentIdx].rows.map(({ ua, code, en, trans }) => ({ ua, code, en, trans }));
+    const b = new Blob([JSON.stringify(clean, null, 2)], {type: 'application/json'});
     const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `${notebooks[currentIdx].name}.json`; a.click();
 }
 
@@ -797,4 +855,4 @@ if ('serviceWorker' in navigator) {
             window.location.reload();
         });
     });
-    }
+}
