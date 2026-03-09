@@ -618,6 +618,19 @@ initPTT();
 const yearEl = document.getElementById('currentYear');
 if (yearEl) yearEl.innerText = new Date().getFullYear();
 
+// BROWSER SPEECH SUPPORT CHECK
+if (!(window.SpeechRecognition || window.webkitSpeechRecognition)) {
+    document.body.classList.add('no-speech');
+    const voicePanel = document.getElementById('voiceSettingsContent');
+    if (voicePanel) {
+        voicePanel.innerHTML = `
+            <div style="text-align:center; padding: 20px 10px; line-height: 1.9; font-size: 1rem;">
+                <p>Голосовий ввід підтримується лише у браузерах на основі <strong>Chromium</strong>:</p>
+                <p style="margin-top:10px;">🌐 Chrome &nbsp;&nbsp; 🔵 Edge &nbsp;&nbsp; ⚡ Brave &nbsp;&nbsp; 🟠 Opera &nbsp;&nbsp; 🟣 Vivaldi</p>
+            </div>`;
+    }
+}
+
 // SERVICE WORKER REGISTRATION & UPDATE DETECTION
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
