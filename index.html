@@ -1,154 +1,174 @@
-<!DOCTYPE html>
-<html lang="uk">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>My Personal Anki</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Gochi+Hand&family=Indie+Flower&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css">
-    <link rel="manifest" href="manifest.json">
-    <meta name="theme-color" content="#ffffff">
-    <link rel="apple-touch-icon" sizes="180x180" href="icon/apple-touch-icon.png">
-    <link rel="icon" type="image/png" sizes="32x32" href="icon/favicon-32x32.png">
-    <link rel="icon" type="image/png" sizes="16x16" href="icon/favicon-16x16.png">
-    <link rel="shortcut icon" href="icon/favicon.ico">
-</head>
-<body>
-    <div id="updateBanner" style="display:none; position:fixed; top:0; left:0; width:100%; background:var(--anki-red); color:white; padding:15px; text-align:center; font-weight:bold; z-index:9999; box-shadow: 0 4px 10px rgba(0,0,0,0.3);">
-        Доступна нова версія! <button onclick="app.applyUpdate()" style="margin-left:15px; padding:6px 16px; border:none; background:white; color:var(--anki-red); font-weight:bold; border-radius:5px; cursor:pointer;">Оновити</button>
-    </div>
+:root {
+    --bg-color: #fdf6e3; --text-color: #2c3e50; --border-color: #4a4a4a;
+    --card-bg: #fff; --accent: #3498db; --anki-red: #e74c3c;
+    --anki-orange: #e67e22; --anki-blue: #3498db; --anki-green: #2ecc71;
+    --input-bg: rgba(0,0,0,0.05);
+}
+* { box-sizing: border-box; }
+[data-theme="dark"] {
+    --bg-color: #2c3e50; --text-color: #ecf0f1; --border-color: #ecf0f1;
+    --card-bg: #34495e; --accent: #f1c40f;
+    --input-bg: rgba(255,255,255,0.1);
+}
 
-    <header>
-        <h1>My Personal Anki</h1>
-        <div class="top-menu">
-            <div class="top-btn" onclick="openModal('settingsOverlay')">⚙️</div>
-            <div class="top-btn" onclick="toggleTheme()">🌓</div>
-        </div>
-    </header>
+html, body { -ms-overflow-style: none; scrollbar-width: none; overflow-x: hidden; }
+::-webkit-scrollbar { display: none; }
 
-    <div class="shelf" id="shelf"></div>
+body {
+    font-family: 'Gochi Hand', cursive; background-color: var(--bg-color);
+    color: var(--text-color); transition: 0.3s; margin: 0; padding: 20px;
+    display: flex; flex-direction: column; align-items: center; min-height: 100dvh;
+}
 
-    <div class="modal-overlay" id="trainingOverlay" onclick="closeAllModals()">
-        <div class="modal-content hand-drawn-border" onclick="event.stopPropagation()">
-            <span class="close-x" onclick="closeAllModals()">✖</span>
-            <h2 id="trainingTitle">Навчання</h2>
-            
-            <div class="counter-text">Залишилось: <span id="cardsLeft">0</span></div>
-            <div class="progress-container"><div id="progressBar"></div></div>
+footer { margin-top: auto; }
 
-            <div class="flashcard-container" onclick="flipCard()">
-                <div class="flashcard" id="mainCard">
-                    <div class="card-face hand-drawn-border">
-                        <div class="txt-ua" id="cardUA">Переклад</div>
-                        <div class="txt-code" id="cardCode">CODE</div>
-                    </div>
-                    <div class="card-face card-back hand-drawn-border">
-                        <div class="txt-en" id="cardEN">Original</div>
-                        <div class="txt-trans" id="cardTrans">[transcription]</div>
-                        <button class="btn-speaker" onclick="event.stopPropagation(); speakCurrentCard();">🔊</button>
-                    </div>
-                </div>
-            </div>
+.hand-drawn-border {
+    border: 2px solid var(--border-color);
+    border-radius: 255px 15px 225px 15px/15px 225px 15px 255px;
+    padding: 20px; background: var(--card-bg);
+    box-shadow: 5px 5px 0px var(--border-color);
+}
 
-            <div id="speechPanel" class="speech-panel">
-                <div class="ptt-container">
-                    <canvas class="audio-canvas"></canvas>
-                    <button class="mic-btn round-mic">🎙️</button>
-                </div>
-                <input type="text" class="speech-input admin-input" placeholder="Press and Hold to Speak..." readonly style="width: 100%; border:none; background:var(--input-bg); text-align:center;">
-            </div>
+/* Стилізований прогрес-бар у стилі Hand-Drawn */
+.progress-container { 
+    width: 80%; 
+    background: var(--input-bg); 
+    height: 16px; 
+    margin: 15px 0; 
+    overflow: hidden; 
+    border: 2px solid var(--border-color);
+    border-radius: 255px 15px 225px 15px/15px 225px 15px 255px;
+    box-shadow: 2px 2px 0px var(--border-color);
+}
 
-            <div id="trainingActions" style="display:none; width: 100%;">
-                <div class="training-controls">
-                    <button class="anki-button btn-grade" style="color:var(--anki-red); border-color:var(--anki-red)" onclick="gradeCard(1)">Знову</button>
-                    <button class="anki-button btn-grade" style="color:var(--anki-orange); border-color:var(--anki-orange)" onclick="gradeCard(2)">Важко</button>
-                    <button class="anki-button btn-grade" style="color:var(--anki-blue); border-color:var(--anki-blue)" onclick="gradeCard(3)">Добре</button>
-                    <button class="anki-button btn-grade" style="color:var(--anki-green); border-color:var(--anki-green)" onclick="gradeCard(4)">Легко</button>
-                </div>
-            </div>
-            <div id="hintText" style="opacity: 0.6; font-size: 0.9rem; margin-top: 10px;">Клікніть, щоб перевернути</div>
-        </div>
-    </div>
+#progressBar { 
+    height: 100%; 
+    background: var(--anki-green); 
+    width: 0%; 
+    transition: 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275); 
+    background-image: linear-gradient(45deg, rgba(255,255,255,.2) 25%, transparent 25%, transparent 50%, rgba(255,255,255,.2) 50%, rgba(255,255,255,.2) 75%, transparent 75%, transparent);
+    background-size: 15px 15px;
+}
+.counter-text { font-size: 1.1rem; font-weight: bold; margin-bottom: 5px; opacity: 0.8; }
 
-    <div class="modal-overlay" id="settingsOverlay" onclick="closeAllModals()">
-        <div class="modal-content hand-drawn-border" onclick="event.stopPropagation()">
-            <span class="close-x" onclick="closeAllModals()">✖</span>
-            <h2>Голос</h2>
-            <div class="settings-row" style="margin-top: 10px;">
-                <label>Оберіть голос:</label>
-                <select id="voiceSelect" onchange="app.updateVoice(this.value)" style="width: 100%; padding: 8px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-color); color: var(--text-color); font-family: inherit; margin-top: 5px; cursor: pointer;"></select>
-            </div>
-            <div class="settings-row">
-                <label>Швидкість: <span id="valRate">0.9</span></label>
-                <input type="range" min="0.5" max="1.5" step="0.1" id="inputRate" oninput="app.updateSpeechSetting('rate', this.value)">
-            </div>
-            <div class="settings-row">
-                <label>Тембр: <span id="valPitch">1.0</span></label>
-                <input type="range" min="0.5" max="1.5" step="0.1" id="inputPitch" oninput="app.updateSpeechSetting('pitch', this.value)">
-            </div>
-            <div class="settings-row">
-                <label>Поріг шуму: <span id="valNoise">20</span></label>
-                <input type="range" min="0" max="155" step="5" id="inputNoise" oninput="app.updateSpeechSetting('noiseThreshold', this.value)">
-            </div>
-            <div class="settings-row">
-                <label>Таймаут (сек): <span id="valTimeout">3</span></label>
-                <input type="range" min="1" max="7" step="1" id="inputTimeout" oninput="app.updateSpeechSetting('silenceTimeout', this.value)">
-            </div>
+header { width: 100%; max-width: 800px; display: flex; justify-content: center; gap: 20px; align-items: center; margin-bottom: 40px; }
+h1 { font-family: 'Indie Flower', cursive; font-size: 2rem; margin: 0; }
+.top-menu { display: flex; gap: 15px; }
+.top-btn { font-size: 1.5rem; cursor: pointer; }
 
-            <!-- Live Tuning Panel (Minimal) -->
-            <div class="speech-panel" style="margin-bottom: 20px; border-top: 1px dashed var(--border-color); padding-top: 15px;">
-                <div class="ptt-container">
-                    <canvas class="audio-canvas" style="height:120px;"></canvas>
-                    <button class="mic-btn round-mic" style="width:70px; height:70px; font-size:2rem;">🎙️</button>
-                </div>
-                <input type="text" class="speech-input admin-input" placeholder="Voice testing..." readonly style="width: 100%; text-align:center; background:none; border:none;">
-            </div>
+.run-btn { background: var(--anki-blue); color: #fff; padding: 15px 30px; font-size: 1.5rem; }
 
-            <button class="anki-button" style="background:var(--anki-green); color:white;" onclick="closeAllModals()">Зберегти</button>
-        </div>
-    </div>
+.mic-btn {
+    touch-action: manipulation;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+}
 
-    <div class="modal-overlay" id="menuOverlay" onclick="closeAllModals()">
-        <div class="modal-content hand-drawn-border" onclick="event.stopPropagation()">
-            <span class="close-x" onclick="closeAllModals()">✖</span>
-            <h2 id="menuTitle">Блокнот</h2>
-            <button class="anki-button" style="background-color:var(--anki-blue); color:white;" onclick="startTraining()">🚀 Вчити</button>
-            <button class="anki-button" onclick="openAdmin()">📝 Редагувати</button>
-            <button id="syncBtn" class="anki-button" style="background-color:var(--anki-green); color:white; display:none;" onclick="document.getElementById('updateFileInput').click()">🔄 Оновити</button>
-            <input type="file" id="updateFileInput" style="display:none" onchange="updateFromFile(event)">
-            <button class="anki-button" style="color:var(--anki-red); border-color:var(--anki-red);" onclick="deleteCurrentNotebook()">🗑️ Видалити</button>
-        </div>
-    </div>
+@media (max-width: 600px) {
+    .shelf { grid-template-columns: repeat(auto-fill, minmax(70px, 1fr)); gap: 10px; padding: 10px; }
+    .notebook { width: 100%; }
+    .notebook-cover { height: 90px; font-size: 1rem; padding: 5px; }
+    .flashcard { min-height: 250px; }
+    .txt-code, .txt-en { font-size: 1.5rem; }
+    .txt-ua, .txt-trans { font-size: 1rem; }
+}
 
-    <div class="modal-overlay" id="adminOverlay" onclick="closeAllModals()">
-        <div class="modal-content hand-drawn-border" onclick="event.stopPropagation()">
-            <span class="close-x" onclick="closeAllModals()">✖</span>
-            <h2 id="adminTitle">Редагування</h2>
-            <div id="adminCardsContainer"></div>
-            <div style="margin-top:20px; display:flex; flex-direction:column; align-items:center; gap:10px;">
-                <button class="anki-button" onclick="insertCardRow()">➕ Додати рядок</button>
-                <button class="anki-button" style="background-color:var(--anki-green); color:white;" onclick="saveAdminData()">💾 Зберегти</button>
-                <button class="anki-button" style="color:var(--accent); border-color:var(--accent);" onclick="exportCurrentNotebook()">📤 Експорт JSON</button>
-            </div>
-        </div>
-    </div>
+/* Unsupported browser: hide all voice UI permanently */
+.no-speech .mic-btn,
+.no-speech .speech-input,
+.no-speech #speechPanel,
+.no-speech #settingsOverlay .anki-button { display: none !important; }
 
-    <div class="modal-overlay" id="createOverlay" onclick="closeAllModals()">
-        <div class="modal-content hand-drawn-border" onclick="event.stopPropagation()">
-            <span class="close-x" onclick="closeAllModals()">✖</span>
-            <h2>Новий блокнот</h2>
-            <button class="anki-button" onclick="addNotebook(false)">📝 Чистий блокнот</button>
-            <button class="anki-button" style="background-color:var(--anki-green); color:white;" onclick="document.getElementById('syncFileInput').click()">🔗 Прив'язати JSON</button>
-            <input type="file" id="syncFileInput" style="display:none" accept=".json" onchange="addNotebookWithFile(event)">
-        </div>
-    </div>
+.shelf { 
+    display: grid; grid-template-columns: repeat(auto-fill, 150px); 
+    gap: 20px; width: 100%; max-width: 1100px; justify-content: center; padding: 20px 40px;
+}
 
-    <footer style="text-align:center; padding: 20px; font-size: 0.9rem; color: var(--border-color); opacity: 0.8;">
-        © <span id="currentYear"></span> Mykhailo Anisimov
-    </footer>
+.notebook { cursor: pointer; text-align: center; transition: 0.3s; width: 150px; }
+.notebook:hover { transform: rotate(-5deg) scale(1.1); }
+.notebook-cover { height: 140px; display: flex; align-items: center; justify-content: center; font-weight: bold; text-transform: uppercase; padding: 10px; font-family: 'Gochi Hand', cursive; }
 
-    <script src="app.js"></script>
-</body>
-</html>
+.modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); justify-content: center; align-items: flex-start; z-index: 100; overflow-y: auto; padding: 60px 0; }
+.modal-content { 
+    width: 95%; max-width: 540px; position: relative; 
+    text-align: center; display: flex; flex-direction: column; align-items: center; 
+    padding: 30px 20px; box-sizing: border-box; background: var(--card-bg);
+}
+.close-x { position: absolute; top: 15px; right: 20px; font-size: 1.8rem; cursor: pointer; color: var(--anki-red); }
+
+.flashcard-container { perspective: 1000px; width: 100%; max-width: 400px; height: 260px; margin: 15px 0; cursor: pointer; }
+.flashcard { position: relative; width: 100%; height: 100%; transition: transform 0.5s; transform-style: preserve-3d; }
+.flashcard.flipped { transform: rotateY(180deg); }
+.card-face { 
+    position: absolute; width: 100%; height: 100%; backface-visibility: hidden; 
+    display: flex; flex-direction: column; justify-content: center; align-items: center; 
+    padding: 20px; box-sizing: border-box; font-family: sans-serif; 
+}
+.card-back { transform: rotateY(180deg); }
+
+.txt-code { font-size: 1.3rem; font-weight: 500; color: var(--accent); margin-top: 8px; text-transform: uppercase; }
+.txt-ua { font-size: 1.8rem; font-weight: 800; color: var(--text-color); margin: 0; line-height: 1.1; }
+.txt-en { font-size: 1.8rem; color: var(--anki-blue); font-weight: bold; }
+.txt-trans { font-size: 1.15rem; margin-top: 6px; color: var(--accent); font-style: italic; }
+
+.training-controls { display: flex; flex-direction: row; justify-content: center; gap: 8px; width: 100%; margin-top: 15px; }
+.btn-grade { flex: 1; font-size: 1.1rem; padding: 10px 5px; white-space: nowrap; max-width: 110px; }
+
+.anki-button { 
+    font-family: 'Gochi Hand', cursive; background: none; border: 2px solid var(--border-color); border-radius: 12px; 
+    padding: 10px 18px; font-size: 1.1rem; cursor: pointer; color: var(--text-color); width: 100%; max-width: 320px; 
+    margin: 8px 0; display: flex; align-items: center; justify-content: center; gap: 10px;
+}
+
+/* SPEECH PANEL STYLES - NEW ROUND PTT */
+.speech-panel { display: flex; flex-direction: column; gap: 12px; width: 100%; max-width: 400px; margin-top: 8px; align-items: center; }
+.ptt-container { position: relative; width: 100%; display: flex; justify-content: center; align-items: center; height: 100px; }
+.audio-canvas { width: 100%; height: 100%; background: transparent; border-radius: 15px; display: block; border: 1px solid rgba(0,0,0,0.05); }
+.round-mic { 
+    position: absolute; width: 70px; height: 70px; border-radius: 50%; 
+    border: 3px solid var(--border-color); background: var(--card-bg); 
+    font-size: 1.8rem; display: flex; align-items: center; justify-content: center; 
+    z-index: 10; cursor: pointer; transition: 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    box-shadow: 0 4px 15px rgba(0,0,0,0.15), 3px 3px 0 var(--border-color);
+}
+.round-mic:hover { transform: scale(1.05); }
+.round-mic:active { transform: scale(0.95); box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+.round-mic:disabled { opacity: 0.4; filter: grayscale(1); pointer-events: none; cursor: default; }
+
+.btn-speaker {
+    width: 45px; height: 45px; border-radius: 50%;
+    border: 2px solid var(--border-color); background: var(--card-bg);
+    font-size: 1.2rem; display: flex; align-items: center; justify-content: center;
+    cursor: pointer; transition: 0.2s;
+    box-shadow: 2px 2px 0 var(--border-color);
+    margin-top: 15px;
+}
+.btn-speaker:hover { transform: scale(1.1); background: var(--input-bg); }
+.btn-speaker:active { transform: scale(0.9); }
+
+.mic-active { 
+    color: white !important; 
+    background: var(--anki-red) !important;
+    border-color: var(--anki-red) !important;
+    animation: mic-pulse 1.2s infinite; 
+    box-shadow: 0 0 20px rgba(231, 76, 60, 0.4);
+}
+@keyframes mic-pulse { 
+    0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.5); }
+    70% { transform: scale(1.1); box-shadow: 0 0 0 15px rgba(231, 76, 60, 0); }
+    100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(231, 76, 60, 0); }
+}
+
+#adminCardsContainer { width: 100%; display: flex; flex-direction: column; gap: 20px; margin-top: 20px; }
+.admin-card { border: 2px solid var(--border-color); border-radius: 15px; padding: 20px; text-align: left; display: flex; flex-direction: column; gap: 8px; background: var(--card-bg); font-family: sans-serif; }
+.admin-input { width: 100%; box-sizing: border-box; padding: 12px; border: 2px solid var(--border-color); border-radius: 10px; font-family: sans-serif; font-size: 1rem; background: var(--input-bg); color: var(--text-color); }
+.card-header { display: flex; justify-content: space-between; align-items: center; }
+.card-num { font-weight: bold; font-size: 1.2rem; color: var(--accent); }
+
+.settings-row { width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 5px; margin-bottom: 15px; font-family: sans-serif; }
+.settings-row label { font-size: 0.9rem; opacity: 0.8; }
+.settings-row input[type="range"] { width: 100%; cursor: pointer; }
+.filter-group { display: flex; gap: 10px; margin-bottom: 20px; width: 100%; }
+.filter-btn { flex: 1; padding: 12px; border: 2px solid var(--border-color); border-radius: 12px; background: none; cursor: pointer; font-family: 'Gochi Hand'; color: var(--text-color); font-size: 1.1rem; }
+.filter-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
