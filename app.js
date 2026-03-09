@@ -712,4 +712,168 @@ if ('serviceWorker' in navigator) {
             window.location.reload();
         });
     });
-                }
+}
+
+// ============================================================
+// ANDROID ДІАГНОСТИКА — ТИМЧАСОВИЙ БЛОК
+// Коли все запрацює — видалити від цього рядка до кінця файлу
+// ============================================================
+(function() {
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = `
+        position: fixed; bottom: 0; left: 0; right: 0; z-index: 99999;
+        border-top: 2px solid #00ff88; font-family: monospace; font-size: 11px;
+    `;
+    document.body.appendChild(wrapper);
+
+    const toolbar = document.createElement('div');
+    toolbar.style.cssText = `
+        display: flex; align-items: center; gap: 6px;
+        background: #111; padding: 4px 8px;
+    `;
+    wrapper.appendChild(toolbar);
+
+    const title = document.createElement('span');
+    title.textContent = '🐛 Android Debug';
+    title.style.cssText = 'color:#00ff88; flex:1; font-weight:bold;';
+    toolbar.appendChild(title);
+
+    const btnStyle = 'background:#333;color:#fff;border:1px solid #555;padding:2px 10px;font-size:11px;cursor:pointer;border-radius:3px;';
+
+    const collapseBtn = document.createElement('button');
+    collapseBtn.textContent = '▼ згорнути';
+    collapseBtn.style.cssText = btnStyle;
+    toolbar.appendChild(collapseBtn);
+
+    const copyBtn = document.createElement('button');
+    copyBtn.textContent = '📋 копіювати';
+    copyBtn.style.cssText = btnStyle;
+    toolbar.appendChild(copyBtn);
+
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = '✕';
+    closeBtn.style.cssText = btnStyle + 'color:#ff6666;';
+    toolbar.appendChild(closeBtn);
+
+    const log = document.createElement('div');
+    log.id = 'androidDebug';
+    log.style.cssText = `
+        background: rgba(0,0,0,0.92); color: #00ff88;
+        padding: 6px 8px; max-height: 40vh; overflow-y: auto;
+    `;
+    wrapper.appendChild(log);
+
+    let collapsed = false;
+    collapseBtn.onclick = () => {
+        collapsed = !collapsed;
+        log.style.display = collapsed ? 'none' : 'block';
+        collapseBtn.textContent = collapsed ? '▲ розгорнути' : '▼ згорнути';
+    };
+
+    copyBtn.onclick = () => {
+        const lines = Array.from(log.querySelectorAll('div'))
+            .map(el => el.textContent).join('\n');
+        navigator.clipboard.writeText(lines).then(() => {
+            copyBtn.textContent = '✓ скопійовано!';
+            setTimeout(() => { copyBtn.textContent = '📋 копіювати'; }, 2000);
+        }).catch(() => {
+            const ta = document.createElement('textarea');
+            ta.value = lines;
+            ta.style.cssText = 'position:fixed;opacity:0;';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            ta.remove();
+            copyBtn.textContent = '✓ скопійовано!';
+            setTimeout(() => { copyBtn.textContent = '📋 копіювати'; }, 2000);
+        });
+    };
+
+    closeBtn.onclick = () => wrapper.remove();
+
+    function dbg(msg, color) {
+        const line = document.createElement('div');
+        line.style.color = color || '#00ff88';
+        line.textContent = '[' + new Date().toISOString().slice(11,19) + '] ' + msg;
+        log.appendChild(line);
+        log.scrollTop = log.scrollHeight;
+        console.log('[DBG]', msg);
+    }
+
+    // --- 1. Базова підтримка API ---
+    dbg('=== ДІАГНОСТИКА СТАРТ ===', '#ffff00');
+    dbg('SpeechRecognition: ' + !!(window.SpeechRecognition || window.webkitSpeechRecognition),
+        (window.SpeechRecognition || window.webkitSpeechRecognition) ? '#00ff88' : '#ff4444');
+    dbg('speechSynthesis: ' + !!window.speechSynthesis,
+        window.speechSynthesis ? '#00ff88' : '#ff4444');
+    dbg('getUserMedia: ' + !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
+        (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) ? '#00ff88' : '#ff4444');
+    dbg('AudioContext: ' + !!(window.AudioContext || window.webkitAudioContext),
+        (window.AudioContext || window.webkitAudioContext) ? '#00ff88' : '#ff4444');
+    dbg('Protocol: ' + location.protocol, location.protocol === 'https:' ? '#00ff88' : '#ff4444');
+    dbg('UserAgent: ' + navigator.userAgent.slice(0, 80), '#aaaaaa');
+
+    // --- 2. Голоси TTS — показуємо точні lang коди ---
+    function checkVoices() {
+        const voices = speechSynthesis.getVoices();
+        dbg('Voices total: ' + voices.length, voices.length > 0 ? '#00ff88' : '#ff9900');
+        voices.forEach(v => dbg('  voice: "' + v.name + '" lang="' + v.lang + '" uri="' + v.voiceURI + '"', '#aaffff'));
+    }
+    checkVoices();
+    speechSynthesis.onvoiceschanged = () => { dbg('onvoiceschanged fired!', '#ffff00'); checkVoices(); };
+    setTimeout(() => { dbg('--- voices @1s ---', '#888888'); checkVoices(); }, 1000);
+    setTimeout(() => { dbg('--- voices @3s ---', '#888888'); checkVoices(); }, 3000);
+
+    // --- 3. Тест TTS без примусового голосу ---
+    setTimeout(() => {
+        dbg('Спроба TTS без voice...', '#ffff00');
+        try {
+            const u = new SpeechSynthesisUtterance('test');
+            u.lang = 'en-US';
+            u.onstart = () => dbg('TTS: onstart ✓', '#00ff88');
+            u.onend   = () => dbg('TTS: onend ✓', '#00ff88');
+            u.onerror = (e) => dbg('TTS ERROR: ' + e.error, '#ff4444');
+            speechSynthesis.speak(u);
+        } catch(e) {
+            dbg('TTS exception: ' + e.message, '#ff4444');
+        }
+    }, 1500);
+
+    // --- 4. Патч toggleRecording ---
+    const origToggle = SpeechEngine.toggleRecording.bind(SpeechEngine);
+    SpeechEngine.toggleRecording = async function() {
+        dbg('toggleRecording() викликано', '#ffff00');
+        dbg('  isPTTActive: ' + this.isPTTActive, '#aaaaaa');
+        dbg('  isStreamActive: ' + this.isStreamActive, '#aaaaaa');
+        dbg('  isEngineRunning: ' + this.isEngineRunning, '#aaaaaa');
+        await origToggle();
+        setTimeout(() => {
+            dbg('  → isPTTActive: ' + this.isPTTActive, '#aaaaaa');
+            dbg('  → isStreamActive: ' + this.isStreamActive, '#aaaaaa');
+            dbg('  → isEngineRunning: ' + this.isEngineRunning, '#aaaaaa');
+        }, 800);
+    };
+
+    // --- 5. Патч recognition подій (через 600ms — після SpeechEngine.init()) ---
+    setTimeout(() => {
+        if (SpeechEngine.recognition) {
+            const r = SpeechEngine.recognition;
+            const origStart  = r.onstart;
+            const origEnd    = r.onend;
+            const origError  = r.onerror;
+            const origResult = r.onresult;
+            r.onstart  = (e) => { dbg('🎙 recognition.onstart', '#00ff88');          if(origStart)  origStart.call(SpeechEngine, e);  };
+            r.onend    = (e) => { dbg('🔴 recognition.onend', '#ff9900');             if(origEnd)    origEnd.call(SpeechEngine, e);    };
+            r.onerror  = (e) => { dbg('❌ recognition.error: ' + e.error, '#ff4444'); if(origError)  origError.call(SpeechEngine, e);  };
+            r.onresult = (e) => { dbg('📝 ' + e.results[0][0].transcript, '#00ffff'); if(origResult) origResult.call(SpeechEngine, e); };
+            dbg('Recognition handlers патчено ✓', '#00ff88');
+        } else {
+            dbg('recognition == null після 600ms!', '#ff4444');
+        }
+    }, 600);
+
+    dbg('Готово. Натисни мікрофон.', '#ffff00');
+})();
+// ============================================================
+// КІНЕЦЬ ДІАГНОСТИЧНОГО БЛОКУ
+// ============================================================
