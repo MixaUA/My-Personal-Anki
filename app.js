@@ -339,6 +339,11 @@ function handleDialog(success) {
 }
 
 // --- SM-2 LOGIC ---
+
+const LEARNING_STEPS_MIN = [1, 10]; // хвилини: крок 1 → через 1хв, крок 2 → через 10хв
+const EASY_BONUS = 1.3;             // множник для "Легко" (як в Anki за замовчуванням)
+const MIN_EASE = 1.3;               // мінімальний ease-фактор (захист від "ease hell")
+
 async function startTraining() {
     const nb = notebooks[currentIdx];
     if(!nb.rows || nb.rows.length === 0) return showDialog({ message: "Порожньо!" });
@@ -374,34 +379,99 @@ function gradeCard(quality) {
     const card = trainingQueue[currentCardIdx];
     if (!card) return;
 
-    if (!card.ease) card.ease = 2.5;
-    if (!card.reps) card.reps = 0;
-    if (!card.interval) card.interval = 0;
+    // Ініціалізація
+    if (!card.ease)                      card.ease = 2.5;
+    if (!card.reps)                      card.reps = 0;
+    if (!card.interval)                  card.interval = 0;
+    if (card.learningStep === undefined) card.learningStep = 0;
 
-    if (quality < 3) { card.reps = 0; card.interval = 0; }
-    else if (quality === 3) {
-        if (card.reps === 0) card.interval = 1;
-        else card.interval = Math.round(card.interval * card.ease);
-        card.reps++;
-    } else { card.interval = 4; card.reps++; }
+    let removeFromQueue = false;
 
-    card.ease = Math.max(1.3, card.ease + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02)));
+    if (quality === 1) {
+        // ── ЗНОВУ ── повернути на крок 0, вставити через 5 карток
+        card.learningStep = 0;
+        card.reps = 0;
+        card.interval = 0;
+        card.ease = Math.max(MIN_EASE, card.ease - 0.20);
 
-    if (quality === 1) trainingQueue.push(trainingQueue.splice(currentCardIdx, 1)[0]);
-    else if (quality === 2) {
         const moved = trainingQueue.splice(currentCardIdx, 1)[0];
-        trainingQueue.splice(Math.min(trainingQueue.length, 2), 0, moved);
-    }
-    else {
-        const d = new Date(); d.setDate(d.getDate() + card.interval);
+        const insertAt = Math.min(currentCardIdx + 5, trainingQueue.length);
+        trainingQueue.splice(insertAt, 0, moved);
+
+    } else if (quality === 2) {
+        // ── ВАЖКО ──
+        card.ease = Math.max(MIN_EASE, card.ease - 0.15);
+
+        if (card.reps > 0) {
+            // Graduated-картка: скоротити інтервал ×1.2 і повернути в review
+            card.interval = Math.max(1, Math.round(card.interval * 1.2));
+            const d = new Date();
+            d.setDate(d.getDate() + card.interval);
+            card.nextReview = d.toISOString();
+            removeFromQueue = true;
+        } else {
+            // Ще в learning: вставити через 3 картки
+            const moved = trainingQueue.splice(currentCardIdx, 1)[0];
+            const insertAt = Math.min(currentCardIdx + 3, trainingQueue.length);
+            trainingQueue.splice(insertAt, 0, moved);
+        }
+
+    } else if (quality === 3) {
+        // ── ДОБРЕ ──
+        if (card.reps === 0) {
+            // Learning: просунути на наступний step
+            card.learningStep = (card.learningStep || 0) + 1;
+
+            if (card.learningStep >= LEARNING_STEPS_MIN.length) {
+                // Graduation: перший реальний інтервал = 1 день
+                card.interval = 1;
+                card.reps = 1;
+                const d = new Date();
+                d.setDate(d.getDate() + card.interval);
+                card.nextReview = d.toISOString();
+                removeFromQueue = true;
+            } else {
+                // Наступний learning step:
+                // 1хв ≈ вставити через 2 картки; 10хв ≈ в кінець черги
+                const moved = trainingQueue.splice(currentCardIdx, 1)[0];
+                const insertAt = LEARNING_STEPS_MIN[card.learningStep] <= 1
+                    ? Math.min(currentCardIdx + 2, trainingQueue.length)
+                    : trainingQueue.length;
+                trainingQueue.splice(insertAt, 0, moved);
+            }
+        } else {
+            // Review: стандартний SM-2 інтервал
+            card.interval = Math.max(1, Math.round(card.interval * card.ease));
+            card.reps++;
+            const d = new Date();
+            d.setDate(d.getDate() + card.interval);
+            card.nextReview = d.toISOString();
+            removeFromQueue = true;
+        }
+
+    } else if (quality === 4) {
+        // ── ЛЕГКО ── graduation одразу, easy bonus
+        card.ease = Math.min(card.ease + 0.15, 3.5);
+        card.interval = card.reps === 0
+            ? 4
+            : Math.max(1, Math.round(card.interval * card.ease * EASY_BONUS));
+        card.reps++;
+        card.learningStep = LEARNING_STEPS_MIN.length; // позначити як graduated
+        const d = new Date();
+        d.setDate(d.getDate() + card.interval);
         card.nextReview = d.toISOString();
+        removeFromQueue = true;
+    }
+
+    if (removeFromQueue) {
         trainingQueue.splice(currentCardIdx, 1);
+        if (currentCardIdx >= trainingQueue.length) currentCardIdx = 0;
     }
 
     saveData();
     updateProgress();
+
     if (trainingQueue.length > 0) {
-        if (currentCardIdx >= trainingQueue.length) currentCardIdx = 0;
         showCard();
     } else {
         showDialog({ message: "Чудово! Всі картки засвоєні." });
@@ -415,8 +485,8 @@ function toggleTheme() {
     const themeBtn = document.getElementById('themeBtn');
     if (themeBtn) {
         themeBtn.innerHTML = isDark 
-            ? '<svg class="svg-icon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>' // Moon
-            : '<svg class="svg-icon" viewBox="0 0 24 24"><path d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM12 1V3M12 21V23M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>'; // Sun
+            ? '<svg class="svg-icon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>'
+            : '<svg class="svg-icon" viewBox="0 0 24 24"><path d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM12 1V3M12 21V23M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>';
     }
 }
 
@@ -727,4 +797,4 @@ if ('serviceWorker' in navigator) {
             window.location.reload();
         });
     });
-}
+    }
