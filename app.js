@@ -57,6 +57,9 @@ const SpeechEngine = {
         this.recognition.onresult = (e) => {
             if (!this.isPTTActive) return;
 
+            // Trigger pseudo-wave spike when speech detected (fallback for Android)
+            this.pseudoWaveActive = 15;
+
             let finalText = "";
             let interimText = "";
             for (let i = 0; i < e.results.length; i++) {
@@ -84,6 +87,13 @@ const SpeechEngine = {
             this.isEngineRunning = true;
             this.isRestarting = false;
             console.log("Recognition: START");
+
+            // Android Variant 3: try AudioContext AFTER recognition has grabbed the mic
+            // Small delay gives recognition time to fully acquire hardware
+            const isAndroid = /android/i.test(navigator.userAgent);
+            if (isAndroid && !this.audioContext) {
+                setTimeout(() => this.tryAndroidAudioContext(), 300);
+            }
         };
 
         this.recognition.onend = () => {
@@ -120,8 +130,17 @@ const SpeechEngine = {
     // Wake up AudioContext + mic stream (once per training session)
     async wakeUpHardware() {
         if (this.isStreamActive) return true;
+
+        // Android: getUserMedia conflicts with SpeechRecognition — both cannot share mic
+        // Skip AudioContext/visualizer on Android, just mark stream as active
+        const isAndroid = /android/i.test(navigator.userAgent);
+        if (isAndroid) {
+            this.isStreamActive = true;
+            this.init();
+            return true;
+        }
+
         try {
-            // Request mic with noise suppression — improves Android recognition stability
             this.stream = await navigator.mediaDevices.getUserMedia({
                 audio: {
                     echoCancellation: true,
@@ -132,7 +151,6 @@ const SpeechEngine = {
 
             this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
 
-            // IMPORTANT: resume() BEFORE connecting source — fixes Android AudioContext bug
             if (this.audioContext.state === 'suspended') {
                 await this.audioContext.resume();
             }
@@ -148,9 +166,10 @@ const SpeechEngine = {
             return true;
         } catch (e) {
             console.error("Microphone error:", e);
-            document.querySelectorAll('.speech-input').forEach(i =>
-                i.placeholder = "🚫 Немає доступу до мікрофону"
-            );
+            const msg = (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError')
+                ? "🚫 Дозвіл на мікрофон відхилено. Натисни 🔒 в адресному рядку → Дозволи → Мікрофон"
+                : "🚫 Немає доступу до мікрофону";
+            document.querySelectorAll('.speech-input').forEach(i => i.placeholder = msg);
             return false;
         }
     },
@@ -185,6 +204,13 @@ const SpeechEngine = {
         if (!this.isEngineRunning) {
             try { this.recognition.start(); } catch(e) {}
         }
+
+        // Android: start draw loop immediately for pseudo-wave
+        // Real AudioContext attempt happens in onstart after 300ms
+        const isAndroid = /android/i.test(navigator.userAgent);
+        if (isAndroid && !this.animationId) {
+            this.draw();
+        }
     },
 
     stopRecording() {
@@ -206,15 +232,55 @@ const SpeechEngine = {
         }
     },
 
+    // Android Variant 3: attempt AudioContext after SpeechRecognition has started
+    // If it works — real waveform. If not — pseudo-wave fallback kicks in via draw()
+    async tryAndroidAudioContext() {
+        try {
+            this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            if (this.audioContext.state === 'suspended') await this.audioContext.resume();
+            const source = this.audioContext.createMediaStreamSource(this.stream);
+            this.analyser = this.audioContext.createAnalyser();
+            this.analyser.fftSize = 256;
+            this.audioDataArray = new Uint8Array(this.analyser.frequencyBinCount);
+            source.connect(this.analyser);
+            console.log("Android AudioContext: real waveform active ✓");
+            if (!this.animationId) this.draw();
+        } catch(e) {
+            // Mic conflict — SpeechRecognition holds it, AudioContext can't get in
+            // Fallback: pseudo-wave driven by interim results will animate instead
+            console.log("Android AudioContext: mic conflict, using pseudo-wave fallback");
+            this.audioContext = null;
+            this.audioDataArray = null;
+            if (!this.animationId) this.draw();
+        }
+    },
+
     draw() {
         const canvases = document.querySelectorAll('.audio-canvas');
         if (canvases.length === 0) return;
 
         if (this.audioDataArray) {
+            // Real waveform — AudioContext available
             this.analyser.getByteFrequencyData(this.audioDataArray);
         }
 
-        let maxVol = this.audioDataArray ? Math.max(...this.audioDataArray) : 0;
+        let maxVol = 0;
+        if (this.audioDataArray) {
+            // Real audio data
+            maxVol = Math.max(...this.audioDataArray);
+        } else if (this.isPTTActive && this.isEngineRunning) {
+            // Pseudo-wave fallback: animate based on time + speech activity
+            // Creates natural-looking oscillation while recording
+            const t = Date.now() / 200;
+            const base = this.pseudoWaveActive ? 140 : 30;
+            maxVol = base + Math.sin(t) * 40 + Math.sin(t * 2.3) * 25 + Math.sin(t * 0.7) * 20;
+            // Decay pseudo activity
+            if (this.pseudoWaveActive) {
+                this.pseudoWaveActive = Math.max(0, (this.pseudoWaveActive || 0) - 1);
+            }
+        }
+
         const actualThreshold = 100 + speechSettings.noiseThreshold;
 
         // Button disabled only at the very first startup moment, not during restarts
@@ -286,8 +352,10 @@ const SpeechEngine = {
             ctx.setLineDash([]);
         });
 
-        if (this.isStreamActive) {
+        if (this.isStreamActive || this.isPTTActive) {
             this.animationId = requestAnimationFrame(() => this.draw());
+        } else {
+            this.animationId = null;
         }
     },
 
@@ -486,32 +554,23 @@ function speakText(text) {
     if (!text) return;
     speechSynthesis.cancel();
 
-    // Android: small delay after cancel() prevents silent failures
-    setTimeout(() => {
-        const utterance = new SpeechSynthesisUtterance(text);
+    const utterance = new SpeechSynthesisUtterance(text);
+    const voices = speechSynthesis.getVoices();
+    let voice = null;
 
-        // Android Chrome returns voices with localized names (e.g. "англійська Велика Британія")
-        // Forcing utterance.voice with these causes synthesis-failed error.
-        // Fix: only use a voice if it has a proper BCP-47 lang code (en-GB, en-US etc.)
-        // Otherwise leave utterance.voice unset — browser default works fine.
-        const voices = speechSynthesis.getVoices();
-        let voice = null;
+    if (speechSettings.voiceURI) {
+        voice = voices.find(v => v.voiceURI === speechSettings.voiceURI) || null;
+    }
+    if (!voice) {
+        // Android uses en_GB / en_US (underscore), desktop uses en-GB / en-US (dash)
+        voice = voices.find(v => /^en[_-]/i.test(v.lang)) || null;
+    }
 
-        if (speechSettings.voiceURI) {
-            voice = voices.find(v => v.voiceURI === speechSettings.voiceURI) || null;
-        }
-        if (!voice) {
-            // Android uses en_GB / en_US (underscore), desktop uses en-GB / en-US (dash)
-            // Match both formats
-            voice = voices.find(v => /^en[_-]/i.test(v.lang)) || null;
-        }
-
-        if (voice) utterance.voice = voice;
-        utterance.lang = 'en-US'; // always set lang even without explicit voice
-        utterance.rate = speechSettings.rate;
-        utterance.pitch = speechSettings.pitch;
-        speechSynthesis.speak(utterance);
-    }, 150);
+    if (voice) utterance.voice = voice;
+    utterance.lang = 'en-US';
+    utterance.rate = speechSettings.rate;
+    utterance.pitch = speechSettings.pitch;
+    speechSynthesis.speak(utterance);
 }
 
 function speakCurrentCard() {
@@ -538,7 +597,9 @@ function flipCard() {
         document.getElementById('trainingActions').style.display = 'block';
         document.getElementById('speechPanel').style.display = 'none';
         document.getElementById('hintText').style.display = 'none';
-        setTimeout(speakCurrentCard, 250);
+        // Android: speak() must be called within user gesture call stack
+        // setTimeout(250) breaks this chain and causes not-allowed error
+        speakCurrentCard();
     }
 }
 
