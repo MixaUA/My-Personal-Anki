@@ -34,12 +34,10 @@ const SpeechEngine = {
     pseudoWaveActive: 0,
     sessionTranscript: "",
 
-    // Check Speech API support
     isSupported() {
         return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
     },
 
-    // Create a fresh SpeechRecognition — called every time recording starts
     _createRecognition() {
         const SpeechReq = window.SpeechRecognition || window.webkitSpeechRecognition;
         const rec = new SpeechReq();
@@ -79,7 +77,6 @@ const SpeechEngine = {
         rec.onend = () => {
             this.isEngineRunning = false;
             console.log('Recognition: END');
-            // Auto-restart while user is still recording
             if (this.isPTTActive) {
                 setTimeout(() => {
                     if (this.isPTTActive && !this.isEngineRunning) {
@@ -107,7 +104,6 @@ const SpeechEngine = {
         return rec;
     },
 
-    // Desktop only: wake up AudioContext + mic visualizer
     async _startVisualizer() {
         if (this.isStreamActive) return;
         try {
@@ -132,16 +128,12 @@ const SpeechEngine = {
         }
     },
 
-    // TAP: toggle recording on / off
     async toggleRecording() {
         if (this.isPTTActive) {
             this.stopRecording();
             return;
         }
-
         if (!this.isSupported()) return;
-
-        // Visual feedback
         this.isPTTActive = true;
         this.sessionTranscript = '';
         clearTimeout(this.silenceTimer);
@@ -152,17 +144,13 @@ const SpeechEngine = {
         });
 
         const isAndroid = /android/i.test(navigator.userAgent);
-
         if (!isAndroid) {
-            // Desktop: start visualizer first, then recognition
             await this._startVisualizer();
         } else {
-            // Android: start draw loop for pseudo-wave immediately
             this.isStreamActive = true;
             if (!this.animationId) this.draw();
         }
 
-        // Start recognition — fresh object every time (same as debug button)
         this.recognition = this._createRecognition();
         try {
             this.recognition.start();
@@ -182,7 +170,6 @@ const SpeechEngine = {
 
         if (this.isEngineRunning) try { this.recognition.stop(); } catch(e) {}
 
-        // Process answer if in training mode
         const isTraining = document.getElementById('trainingOverlay').style.display === 'flex';
         if (isTraining) {
             const sInput = document.querySelector('.speech-input');
@@ -193,7 +180,6 @@ const SpeechEngine = {
     draw() {
         const canvases = document.querySelectorAll('.audio-canvas');
         if (canvases.length === 0) return;
-
         if (this.audioDataArray) {
             this.analyser.getByteFrequencyData(this.audioDataArray);
         }
@@ -202,7 +188,6 @@ const SpeechEngine = {
         if (this.audioDataArray) {
             maxVol = Math.max(...this.audioDataArray);
         } else if (this.isPTTActive && this.isEngineRunning) {
-            // Pseudo-wave for Android — oscillates naturally, spikes on speech
             const t = Date.now() / 200;
             const base = this.pseudoWaveActive > 0 ? 140 : 30;
             maxVol = base + Math.sin(t) * 40 + Math.sin(t * 2.3) * 25 + Math.sin(t * 0.7) * 20;
@@ -210,14 +195,7 @@ const SpeechEngine = {
         }
 
         const actualThreshold = 100 + speechSettings.noiseThreshold;
-
-        const starting = this.isPTTActive && !this.isEngineRunning && this.isStreamActive;
-        document.querySelectorAll('.mic-btn').forEach(btn => btn.disabled = starting);
-        document.querySelectorAll('.speech-input').forEach(input => {
-            if (!this.isPTTActive) input.placeholder = 'Tap to Speak...';
-        });
-
-        let displayVal = (maxVol > actualThreshold) ? maxVol : 0;
+        const displayVal = (maxVol > actualThreshold) ? maxVol : 0;
         this.visualData.push(displayVal);
         this.visualData.shift();
 
@@ -253,14 +231,6 @@ const SpeechEngine = {
                 }
             }
             ctx.stroke();
-            const thresholdH = (actualThreshold / 255) * H;
-            const thresholdYTop = (H - thresholdH) / 2;
-            const thresholdYBottom = (H + thresholdH) / 2;
-            ctx.beginPath();
-            ctx.strokeStyle = '#ff0000'; ctx.setLineDash([5, 5]);
-            ctx.moveTo(0, thresholdYTop); ctx.lineTo(W, thresholdYTop);
-            ctx.moveTo(0, thresholdYBottom); ctx.lineTo(W, thresholdYBottom);
-            ctx.stroke(); ctx.setLineDash([]);
         });
 
         if (this.isStreamActive || this.isPTTActive) {
@@ -311,15 +281,54 @@ function checkVoiceAnswer() {
     } else {
         document.querySelectorAll('.speech-input').forEach(el => {
             el.style.color = '#e74c3c';
-            setTimeout(() => { el.style.color = ''; }, 1000);
+            setTimeout(() => { 
+                el.style.color = ''; 
+                el.value = 'Спробуй ще!';
+                setTimeout(() => {
+                    if (el.value === 'Спробуй ще!') el.value = '';
+                }, 1200);
+            }, 800);
         });
     }
 }
 
+// --- CUSTOM DIALOG ENGINE ---
+let dialogResolve = null;
+function showDialog({ message, type = 'alert', placeholder = '' }) {
+    return new Promise((resolve) => {
+        dialogResolve = resolve;
+        const overlay = document.getElementById('dialogOverlay');
+        const msgEl = document.getElementById('dialogMessage');
+        const inputEl = document.getElementById('dialogInput');
+        const cancelBtn = document.getElementById('dialogCancel');
+        
+        msgEl.innerText = message;
+        inputEl.style.display = type === 'prompt' ? 'block' : 'none';
+        inputEl.value = '';
+        inputEl.placeholder = placeholder;
+        cancelBtn.style.display = type === 'alert' ? 'none' : 'block';
+        
+        overlay.style.display = 'flex';
+        if (type === 'prompt') setTimeout(() => inputEl.focus(), 100);
+    });
+}
+function handleDialog(success) {
+    const overlay = document.getElementById('dialogOverlay');
+    const inputEl = document.getElementById('dialogInput');
+    overlay.style.display = 'none';
+    if (dialogResolve) {
+        if (inputEl.style.display === 'block') {
+            dialogResolve(success ? inputEl.value : null);
+        } else {
+            dialogResolve(success);
+        }
+    }
+}
+
 // --- SM-2 LOGIC ---
-function startTraining() {
+async function startTraining() {
     const nb = notebooks[currentIdx];
-    if(!nb.rows || nb.rows.length === 0) return alert("Порожньо!");
+    if(!nb.rows || nb.rows.length === 0) return showDialog({ message: "Порожньо!" });
 
     document.querySelectorAll('.modal-overlay').forEach(m => m.style.display = 'none');
     document.getElementById('trainingTitle').innerText = nb.name;
@@ -327,7 +336,7 @@ function startTraining() {
     const now = new Date();
     trainingQueue = nb.rows.filter(card => !card.nextReview || new Date(card.nextReview) <= now);
 
-    if(trainingQueue.length === 0) return alert("Все вивчено на сьогодні!");
+    if(trainingQueue.length === 0) return showDialog({ message: "Все вивчено на сьогодні!" });
 
     totalCardsInSession = trainingQueue.length;
     currentCardIdx = 0;
@@ -382,21 +391,30 @@ function gradeCard(quality) {
         if (currentCardIdx >= trainingQueue.length) currentCardIdx = 0;
         showCard();
     } else {
-        alert("Чудово! Всі картки засвоєні.");
+        showDialog({ message: "Чудово! Всі картки засвоєні." });
         closeAllModals();
     }
 }
 
-function toggleTheme() { document.body.dataset.theme = document.body.dataset.theme === 'dark' ? 'light' : 'dark'; }
+function toggleTheme() { 
+    const isDark = document.body.dataset.theme === 'dark';
+    document.body.dataset.theme = isDark ? 'light' : 'dark';
+    const themeBtn = document.getElementById('themeBtn');
+    if (themeBtn) {
+        themeBtn.innerHTML = isDark 
+            ? '<svg class="svg-icon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>' // Moon
+            : '<svg class="svg-icon" viewBox="0 0 24 24"><path d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM12 1V3M12 21V23M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>'; // Sun
+    }
+}
 
 function openModal(id) {
     if(id === 'settingsOverlay') syncSettingsUI();
     document.getElementById(id).style.display = 'flex';
 }
 
-function closeAllModals() {
+async function closeAllModals() {
     const isTr = document.getElementById('trainingOverlay').style.display === 'flex';
-    if (isTr && trainingQueue.length > 0 && !confirm("Вийти?")) return;
+    if (isTr && trainingQueue.length > 0 && !(await showDialog({ message: "Вийти?", type: 'confirm' }))) return;
 
     SpeechEngine.killAll();
     document.querySelectorAll('.modal-overlay').forEach(m => m.style.display = 'none');
@@ -506,9 +524,6 @@ function flipCard() {
         card.classList.add('flipped');
         document.getElementById('trainingActions').style.display = 'block';
         document.getElementById('speechPanel').style.display = 'none';
-        document.getElementById('hintText').style.display = 'none';
-        // Android: speak() must be called within user gesture call stack
-        // setTimeout(250) breaks this chain and causes not-allowed error
         speakCurrentCard();
     }
 }
@@ -518,8 +533,6 @@ function resetCard() {
     if (card) card.classList.remove('flipped');
     const act = document.getElementById('trainingActions');
     if (act) act.style.display = 'none';
-    const hint = document.getElementById('hintText');
-    if (hint) hint.style.display = 'block';
 }
 
 function openAdmin(idx = null) {
@@ -551,11 +564,11 @@ function saveAdminData() {
         ua: c.querySelector('.v-ua').value, code: c.querySelector('.v-code').value,
         en: c.querySelector('.v-en').value, trans: c.querySelector('.v-trans').value
     }));
-    saveData(); alert("Збережено!");
+    saveData(); showDialog({ message: "Збережено!" });
 }
 
-function addNotebook(isL) {
-    const val = prompt("Назва:");
+async function addNotebook(isL) {
+    const val = await showDialog({ message: "Назва:", type: 'prompt' });
     if(val) { notebooks.push({ name: val, linked: true, rows: [] }); saveData(); closeAllModals(); }
 }
 
@@ -577,7 +590,7 @@ function updateFromFile(e) {
         notebooks[currentIdx].name = file.name.replace('.json','');
         notebooks[currentIdx].rows = JSON.parse(ev.target.result);
         saveData();
-        alert("Оновлено!");
+        showDialog({ message: "Оновлено!" });
         closeAllModals();
     };
     reader.readAsText(file);
@@ -589,13 +602,13 @@ function exportCurrentNotebook() {
     const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `${notebooks[currentIdx].name}.json`; a.click();
 }
 
-function deleteCurrentNotebook() { if(confirm("Видалити?")) { notebooks.splice(currentIdx, 1); saveData(); closeAllModals(); } }
+async function deleteCurrentNotebook() { if(await showDialog({ message: "Видалити?", type: 'confirm' })) { notebooks.splice(currentIdx, 1); saveData(); closeAllModals(); } }
 function saveData() { safeSet('scs_v16', notebooks); renderShelf(); }
 
 function renderShelf() {
     const shelf = document.getElementById('shelf');
     if (!shelf) return;
-    shelf.innerHTML = `<div class="notebook hand-drawn-border" onclick="openModal('createOverlay')"><div class="notebook-cover" style="font-size:3rem; color:var(--accent)">+</div></div>`;
+    shelf.innerHTML = '';
     notebooks.forEach((nb, i) => {
         const div = document.createElement('div');
         div.className = 'notebook hand-drawn-border';
@@ -624,7 +637,7 @@ function applyUpdate() {
 window.app = {
     checkVoiceAnswer, updateSpeechSetting, updateVoice, toggleTheme, openModal, closeAllModals,
     openAdmin, insertCardRow, saveAdminData, addNotebook, addNotebookWithFile, updateFromFile,
-    exportCurrentNotebook, deleteCurrentNotebook, reindex, applyUpdate
+    exportCurrentNotebook, deleteCurrentNotebook, reindex, applyUpdate, handleDialog
 };
 
 // Voices: onvoiceschanged fires on desktop; on Android call immediately + on event
@@ -639,6 +652,15 @@ initPTT();
 // Auto-update footer year
 const yearEl = document.getElementById('currentYear');
 if (yearEl) yearEl.innerText = new Date().getFullYear();
+
+// Scroll listener for sticky header "scrolled" state
+window.addEventListener('scroll', () => {
+    if (window.scrollY > 10) {
+        document.body.classList.add('scrolled');
+    } else {
+        document.body.classList.remove('scrolled');
+    }
+});
 
 // Browser speech support check
 if (!(window.SpeechRecognition || window.webkitSpeechRecognition)) {
