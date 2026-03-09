@@ -197,13 +197,11 @@ const SpeechEngine = {
         const actualThreshold = 100 + speechSettings.noiseThreshold;
         
         // --- UI HEALTH UPDATES ---
-        const isHealthy = !this.isStreamActive || this.isEngineRunning;
-        document.querySelectorAll('.mic-btn').forEach(btn => btn.disabled = !isHealthy);
+        // Button is only disabled while PTT is active but engine hasn't started yet (startup moment)
+        const starting = this.isPTTActive && !this.isEngineRunning && this.isStreamActive;
+        document.querySelectorAll('.mic-btn').forEach(btn => btn.disabled = starting);
         document.querySelectorAll('.speech-input').forEach(input => {
-            if (!isHealthy) {
-                input.placeholder = "Connecting...";
-                if (!input.value) input.value = ""; // Force clear to show placeholder
-            } else if (!this.isPTTActive) {
+            if (!this.isPTTActive) {
                 input.placeholder = "Tap to Speak...";
             }
         });
