@@ -4,11 +4,9 @@ let trainingQueue = [];
 let currentCardIdx = 0;
 let totalCardsInSession = 0;
 
-let speechSettings = JSON.parse(localStorage.getItem('scs_speech_profiles_v3')) || {
-    gender: 'female',
+let speechSettings = JSON.parse(localStorage.getItem('scs_speech_v4')) || {
     noiseThreshold: 20, silenceTimeout: 3,
-    male: { rate: 0.9, pitch: 0.9, voiceURI: '' },
-    female: { rate: 0.9, pitch: 1.0, voiceURI: '' }
+    rate: 0.9, pitch: 1.0, voiceURI: ''
 };
 
 // --- AUDIO COMPONENT (SPEECH ENGINE) ---
@@ -17,8 +15,7 @@ const SpeechEngine = {
     visualData: new Array(150).fill(0), 
     audioDataArray: null,
     silenceTimer: null,
-    isListening: false, 
-    lastSoundTime: 0,
+    isListening: false,
     isStreamActive: false,
     ignoreResults: false,
     isEngineRunning: false, 
@@ -97,12 +94,6 @@ const SpeechEngine = {
 
         this.recognition.onerror = (e) => {
             if (e.error !== 'no-speech') console.error("Recognition ERROR:", e.error);
-            // Форсуємо рестарт при критичних помилках мережі
-            if (this.isStreamActive && (e.error === 'network' || e.error === 'aborted')) {
-                setTimeout(() => {
-                    if (!this.isEngineRunning) try { this.recognition.start(); } catch(err) {}
-                }, 500);
-            }
         };
     },
 
@@ -424,16 +415,12 @@ function closeAllModals() {
 
 let _ttsTimeout = null;
 function updateSpeechSetting(key, val) {
-    if (key === 'rate' || key === 'pitch') {
-        speechSettings[speechSettings.gender][key] = parseFloat(val);
-    } else {
-        speechSettings[key] = parseFloat(val);
-    }
+    speechSettings[key] = parseFloat(val);
     
     const map = {'rate':'valRate', 'pitch':'valPitch', 'noiseThreshold':'valNoise', 'silenceTimeout':'valTimeout'};
     const el = document.getElementById(map[key]);
     if (el) el.innerText = val;
-    localStorage.setItem('scs_speech_profiles_v3', JSON.stringify(speechSettings));
+    localStorage.setItem('scs_speech_v4', JSON.stringify(speechSettings));
     
     if (key === 'rate' || key === 'pitch') {
         clearTimeout(_ttsTimeout);
@@ -442,8 +429,8 @@ function updateSpeechSetting(key, val) {
 }
 
 function updateVoice(uri) {
-    speechSettings[speechSettings.gender].voiceURI = uri;
-    localStorage.setItem('scs_speech_profiles_v3', JSON.stringify(speechSettings));
+    speechSettings.voiceURI = uri;
+    localStorage.setItem('scs_speech_v4', JSON.stringify(speechSettings));
     speakText("Voice test");
 }
 
@@ -463,33 +450,19 @@ function populateVoices() {
 }
 
 function syncSettingsUI() {
-    const profile = speechSettings[speechSettings.gender];
     const select = document.getElementById('voiceSelect');
-    if (select) {
-        select.value = profile.voiceURI || '';
-    }
+    if (select) select.value = speechSettings.voiceURI || '';
     
     const map = {
         'inputRate': 'rate', 'valRate': 'rate',
-        'inputPitch': 'pitch', 'valPitch': 'pitch'
-    };
-    
-    for (let id in map) {
-        const el = document.getElementById(id);
-        if (el) {
-            const val = speechSettings[speechSettings.gender][map[id]];
-            if (el.tagName === 'INPUT') el.value = val; else el.innerText = val;
-        }
-    }
-    
-    const globals = {
+        'inputPitch': 'pitch', 'valPitch': 'pitch',
         'inputNoise': 'noiseThreshold', 'valNoise': 'noiseThreshold',
         'inputTimeout': 'silenceTimeout', 'valTimeout': 'silenceTimeout'
     };
-    for (let id in globals) {
+    for (let id in map) {
         const el = document.getElementById(id);
         if (el) {
-            const val = speechSettings[globals[id]];
+            const val = speechSettings[map[id]];
             if (el.tagName === 'INPUT') el.value = val; else el.innerText = val;
         }
     }
@@ -501,21 +474,17 @@ function speakText(text) {
     const utterance = new SpeechSynthesisUtterance(text);
     const voices = speechSynthesis.getVoices();
 
-    const profile = speechSettings[speechSettings.gender];
-    
-    if (profile.voiceURI) {
-        let exactVoice = voices.find(v => v.voiceURI === profile.voiceURI);
-        if (exactVoice) utterance.voice = exactVoice;
-    } 
-    
-    if (!utterance.voice) {
-        let voice = voices.find(v => v.lang.startsWith('en'));
-        if (voice) utterance.voice = voice;
+    if (speechSettings.voiceURI) {
+        const exact = voices.find(v => v.voiceURI === speechSettings.voiceURI);
+        if (exact) utterance.voice = exact;
     }
-    
-    utterance.rate = profile.rate;
-    utterance.pitch = profile.pitch;
-    
+    if (!utterance.voice) {
+        const fallback = voices.find(v => v.lang.startsWith('en'));
+        if (fallback) utterance.voice = fallback;
+    }
+
+    utterance.rate = speechSettings.rate;
+    utterance.pitch = speechSettings.pitch;
     speechSynthesis.speak(utterance);
 }
 
@@ -666,3 +635,26 @@ initPTT();
 // Auto-update footer year
 const yearEl = document.getElementById('currentYear');
 if (yearEl) yearEl.innerText = new Date().getFullYear();
+
+// SERVICE WORKER REGISTRATION & UPDATE DETECTION
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js').then(reg => {
+            reg.addEventListener('updatefound', () => {
+                window.newWorker = reg.installing;
+                window.newWorker.addEventListener('statechange', () => {
+                    if (window.newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                        document.getElementById('updateBanner').style.display = 'block';
+                    }
+                });
+            });
+        });
+
+        let refreshing;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+            if (refreshing) return;
+            refreshing = true;
+            window.location.reload();
+        });
+    });
+}
