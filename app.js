@@ -50,9 +50,14 @@ const SpeechEngine = {
 
         this.recognition = new SpeechReq();
         this.recognition.lang = 'en-US';
-        this.recognition.continuous = false;
         this.recognition.interimResults = true;
         this.recognition.maxAlternatives = 1;
+
+        // Android: continuous=true — no watchdog restarts needed, browser handles session
+        // Desktop: continuous=false + manual restart — more reliable on Chrome desktop
+        const isAndroid = /android/i.test(navigator.userAgent);
+        this.recognition.continuous = isAndroid ? true : false;
+        this.isAndroid = isAndroid;
 
         this.recognition.onresult = (e) => {
             if (!this.isPTTActive) return;
@@ -90,10 +95,10 @@ const SpeechEngine = {
             this.isEngineRunning = false;
             console.log("Recognition: END");
 
-            // Restart only while user is actively recording and not already restarting
-            if (this.isPTTActive && this.isStreamActive && !this.isRestarting) {
+            // Android uses continuous=true so onend only fires when we stop it ourselves
+            // Desktop uses continuous=false and needs watchdog restart
+            if (!this.isAndroid && this.isPTTActive && this.isStreamActive && !this.isRestarting) {
                 this.isRestarting = true;
-                // 300ms on Android is safer than 150ms — avoids InvalidStateError
                 setTimeout(() => {
                     if (!this.isEngineRunning && this.isPTTActive) {
                         try {
@@ -460,7 +465,7 @@ function populateVoices() {
 
     select.innerHTML = '<option value="">Відпустити на розсуд системи</option>';
     availableVoices
-        .filter(v => v.lang.startsWith('en'))
+        .filter(v => /^en[_-]/i.test(v.lang))
         .forEach(v => {
             const opt = document.createElement('option');
             opt.value = v.voiceURI;
@@ -504,12 +509,12 @@ function speakText(text) {
         let voice = null;
 
         if (speechSettings.voiceURI) {
-            // User explicitly picked a voice in settings
             voice = voices.find(v => v.voiceURI === speechSettings.voiceURI) || null;
         }
         if (!voice) {
-            // Only pick a voice with clean BCP-47 code — skip localized-name voices
-            voice = voices.find(v => /^en-[A-Z]{2}$/i.test(v.lang)) || null;
+            // Android uses en_GB / en_US (underscore), desktop uses en-GB / en-US (dash)
+            // Match both formats
+            voice = voices.find(v => /^en[_-]/i.test(v.lang)) || null;
         }
 
         if (voice) utterance.voice = voice;
