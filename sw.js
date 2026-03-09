@@ -1,4 +1,4 @@
-const CACHE_NAME = 'smart-code-v3';
+const CACHE_NAME = 'smart-code-v5';
 const ASSETS = [
     './',
     './index.html',
@@ -18,6 +18,27 @@ self.addEventListener('install', (event) => {
     event.waitUntil(
         caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS))
     );
+});
+
+self.addEventListener('activate', (event) => {
+    event.waitUntil(
+        caches.keys().then((cacheNames) => {
+            return Promise.all(
+                cacheNames.map((name) => {
+                    if (name !== CACHE_NAME) {
+                        console.log('Clearing old cache:', name);
+                        return caches.delete(name);
+                    }
+                })
+            );
+        })
+    );
+});
+
+self.addEventListener('message', (event) => {
+    if (event.data && event.data.action === 'skipWaiting') {
+        self.skipWaiting();
+    }
 });
 
 self.addEventListener('fetch', (event) => {
