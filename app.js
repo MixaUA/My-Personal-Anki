@@ -679,11 +679,29 @@ if (!(window.SpeechRecognition || window.webkitSpeechRecognition)) {
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
         navigator.serviceWorker.register('sw.js').then(reg => {
+            const showUpdateBanner = (worker) => {
+                window.newWorker = worker;
+                document.getElementById('updateBanner').style.display = 'block';
+            };
+
+            // 1. Check if there's already an update waiting (persists across refreshes)
+            if (reg.waiting) showUpdateBanner(reg.waiting);
+
+            // 2. Check if an update is installing
+            if (reg.installing) {
+                reg.installing.addEventListener('statechange', () => {
+                    if (reg.installing.state === 'installed' && navigator.serviceWorker.controller) {
+                        showUpdateBanner(reg.installing);
+                    }
+                });
+            }
+
+            // 3. Listen for future update findings
             reg.addEventListener('updatefound', () => {
-                window.newWorker = reg.installing;
-                window.newWorker.addEventListener('statechange', () => {
-                    if (window.newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                        document.getElementById('updateBanner').style.display = 'block';
+                const newWorker = reg.installing;
+                newWorker.addEventListener('statechange', () => {
+                    if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                        showUpdateBanner(newWorker);
                     }
                 });
             });
