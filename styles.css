@@ -74,6 +74,12 @@ h1 { font-family: 'Indie Flower', cursive; font-size: 2rem; margin: 0; }
     .txt-ua, .txt-trans { font-size: 1rem; }
 }
 
+/* Unsupported browser: hide all voice UI permanently */
+.no-speech .mic-btn,
+.no-speech .speech-input,
+.no-speech #speechPanel,
+.no-speech #settingsOverlay .anki-button { display: none !important; }
+
 .shelf { 
     display: grid; grid-template-columns: repeat(auto-fill, 150px); 
     gap: 20px; width: 100%; max-width: 1100px; justify-content: center; padding: 20px 40px;
