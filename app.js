@@ -447,13 +447,6 @@ function updateVoice(uri) {
     speakText("Voice test");
 }
 
-function setGender(g) {
-    speechSettings.gender = g;
-    localStorage.setItem('scs_speech_profiles_v3', JSON.stringify(speechSettings));
-    syncSettingsUI(); 
-    speakText("Voice test");
-}
-
 function populateVoices() {
     const select = document.getElementById('voiceSelect');
     if (!select) return;
@@ -470,11 +463,6 @@ function populateVoices() {
 }
 
 function syncSettingsUI() {
-    const btnM = document.getElementById('btnMale');
-    const btnF = document.getElementById('btnFemale');
-    if (btnM) btnM.classList.toggle('active', speechSettings.gender === 'male');
-    if (btnF) btnF.classList.toggle('active', speechSettings.gender === 'female');
-    
     const profile = speechSettings[speechSettings.gender];
     const select = document.getElementById('voiceSelect');
     if (select) {
@@ -512,9 +500,6 @@ function speakText(text) {
     speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     const voices = speechSynthesis.getVoices();
-    const priority = speechSettings.gender === 'male' 
-        ? ['UK English Male', 'David', 'Google UK English Male']
-        : ['Google US English', 'UK English Female', 'Samantha', 'Karen', 'Google UK English Female'];
 
     const profile = speechSettings[speechSettings.gender];
     
@@ -524,7 +509,7 @@ function speakText(text) {
     } 
     
     if (!utterance.voice) {
-        let voice = voices.find(v => priority.some(p => v.name.includes(p)));
+        let voice = voices.find(v => v.lang.startsWith('en'));
         if (voice) utterance.voice = voice;
     }
     
@@ -663,8 +648,14 @@ function initPTT() {
     });
 }
 
+function applyUpdate() {
+    if (window.newWorker) {
+        window.newWorker.postMessage({ action: 'skipWaiting' });
+    }
+}
+
 window.app = {
-    checkVoiceAnswer, updateSpeechSetting, setGender, updateVoice, toggleTheme, openModal, closeAllModals, openAdmin, insertCardRow, saveAdminData, addNotebook, addNotebookWithFile, updateFromFile, exportCurrentNotebook, deleteCurrentNotebook, reindex
+    checkVoiceAnswer, updateSpeechSetting, updateVoice, toggleTheme, openModal, closeAllModals, openAdmin, insertCardRow, saveAdminData, addNotebook, addNotebookWithFile, updateFromFile, exportCurrentNotebook, deleteCurrentNotebook, reindex, applyUpdate
 };
 
 speechSynthesis.onvoiceschanged = populateVoices;
