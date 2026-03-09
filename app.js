@@ -173,9 +173,20 @@ const SpeechEngine = {
         clearTimeout(this.silenceTimer);
         document.querySelectorAll('.mic-btn').forEach(btn => btn.classList.remove('mic-active'));
         document.querySelectorAll('.speech-input').forEach(i => i.placeholder = "Tap to Speak...");
-        
-        try { this.recognition.stop(); } catch(e) {}
-        
+
+        // Full hardware teardown so next tap starts clean
+        if (this.recognition) try { this.recognition.stop(); } catch(e) {}
+        this.isStreamActive = false;
+        this.isEngineRunning = false;
+        if (this.stream) this.stream.getTracks().forEach(t => t.stop());
+        if (this.audioContext && this.audioContext.state !== 'closed') this.audioContext.close();
+        cancelAnimationFrame(this.animationId);
+        this.animationId = null;
+        this.audioContext = null;
+        this.analyser = null;
+        this.stream = null;
+        this.audioDataArray = null;
+
         const isTraining = document.getElementById('trainingOverlay').style.display === 'flex';
         if (isTraining) {
             const sInput = document.querySelector('.speech-input');
@@ -229,19 +240,10 @@ const SpeechEngine = {
             
             ctx.beginPath();
             
-            // СТАН ДВИГУНА:
-            // 1. Якщо все завантажено, але розпізнавання "впало" (isEngineRunning: false) - малюємо ЧЕРВОНИМ ПУНКТИРОМ
-            // 2. Якщо все ок, але ми не натиснули кнопку - СІРИМ (спокій)
-            // 3. Якщо запис активний - ЧОРНИМ (активність)
-            if (this.isStreamActive && !this.isEngineRunning) {
-                ctx.strokeStyle = '#e74c3c'; // Червоний (Помилка/Перезапуск)
-                ctx.setLineDash([2, 4]);
-                ctx.lineWidth = 2;
-            } else {
-                ctx.strokeStyle = this.isPTTActive ? '#1a1a1a' : '#cccccc';
-                ctx.lineWidth = this.isPTTActive ? 3 : 1.5;
-                ctx.setLineDash([]);
-            }
+            // Waveform color: active recording = dark, idle = grey
+            ctx.strokeStyle = this.isPTTActive ? '#1a1a1a' : '#cccccc';
+            ctx.lineWidth = this.isPTTActive ? 3 : 1.5;
+            ctx.setLineDash([]);
             
             ctx.lineJoin = 'round';
             
