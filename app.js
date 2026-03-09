@@ -133,10 +133,10 @@ const SpeechEngine = {
 
         // Android: getUserMedia conflicts with SpeechRecognition — both cannot share mic
         // Skip AudioContext/visualizer on Android, just mark stream as active
+        // init() already called at startup, no need to call again
         const isAndroid = /android/i.test(navigator.userAgent);
         if (isAndroid) {
             this.isStreamActive = true;
-            this.init();
             return true;
         }
 
@@ -201,15 +201,93 @@ const SpeechEngine = {
 
         document.querySelectorAll('.speech-input').forEach(i => i.placeholder = "Слухаю...");
 
-        if (!this.isEngineRunning) {
-            try { this.recognition.start(); } catch(e) {}
-        }
-
-        // Android: start draw loop immediately for pseudo-wave
-        // Real AudioContext attempt happens in onstart after 300ms
         const isAndroid = /android/i.test(navigator.userAgent);
-        if (isAndroid && !this.animationId) {
-            this.draw();
+
+        if (isAndroid) {
+            // Android: create fresh SpeechRecognition every time — same pattern as debug button
+            // Reusing the same object causes silent failures on Android Chrome
+            const SpeechReq = window.SpeechRecognition || window.webkitSpeechRecognition;
+            const rec = new SpeechReq();
+            rec.lang = 'en-US';
+            rec.continuous = false;
+            rec.interimResults = true;
+            rec.maxAlternatives = 1;
+
+            rec.onstart = () => {
+                this.isEngineRunning = true;
+                this.isRestarting = false;
+                if (!this.audioContext) setTimeout(() => this.tryAndroidAudioContext(), 300);
+            };
+
+            rec.onresult = (e) => {
+                if (!this.isPTTActive) return;
+                this.pseudoWaveActive = 15;
+                let finalText = "", interimText = "";
+                for (let i = 0; i < e.results.length; i++) {
+                    const t = e.results[i][0].transcript.trim();
+                    if (e.results[i].isFinal) finalText += t + " ";
+                    else interimText += t;
+                }
+                if (finalText) this.sessionTranscript += finalText;
+                const display = (this.sessionTranscript + interimText).trim();
+                document.querySelectorAll('.speech-input').forEach(input => {
+                    input.value = display;
+                    input.style.color = '';
+                });
+                clearTimeout(this.silenceTimer);
+                if (display.length > 0) {
+                    this.silenceTimer = setTimeout(() => {
+                        if (this.isPTTActive) this.stopRecording();
+                    }, speechSettings.silenceTimeout * 1000);
+                }
+            };
+
+            rec.onend = () => {
+                this.isEngineRunning = false;
+                if (this.isPTTActive && !this.isRestarting) {
+                    this.isRestarting = true;
+                    setTimeout(() => {
+                        this.isRestarting = false;
+                        if (this.isPTTActive && !this.isEngineRunning) {
+                            // Create another fresh object for restart
+                            this.sessionTranscript = this.sessionTranscript || "";
+                            try {
+                                const SpeechReq2 = window.SpeechRecognition || window.webkitSpeechRecognition;
+                                const rec2 = new SpeechReq2();
+                                rec2.lang = 'en-US';
+                                rec2.continuous = false;
+                                rec2.interimResults = true;
+                                rec2.maxAlternatives = 1;
+                                rec2.onstart  = rec.onstart;
+                                rec2.onresult = rec.onresult;
+                                rec2.onend    = rec.onend;
+                                rec2.onerror  = rec.onerror;
+                                this.recognition = rec2;
+                                rec2.start();
+                            } catch(e) { console.warn("Android restart failed:", e); }
+                        }
+                    }, 250);
+                }
+            };
+
+            rec.onerror = (e) => {
+                this.isEngineRunning = false;
+                this.isRestarting = false;
+                if (e.error === 'no-speech') return;
+                console.warn("Android recognition error:", e.error);
+            };
+
+            this.recognition = rec;
+            try { rec.start(); } catch(e) { console.warn("Android rec start failed:", e); }
+
+            // Start draw loop for pseudo-wave
+            if (!this.animationId) this.draw();
+
+        } else {
+            // Desktop: reuse existing recognition object with watchdog restart
+            if (!this.isEngineRunning) {
+                try { this.recognition.start(); } catch(e) {}
+            }
         }
     },
 
@@ -867,6 +945,15 @@ if ('serviceWorker' in navigator) {
         (window.AudioContext || window.webkitAudioContext) ? '#00ff88' : '#ff4444');
     dbg('Protocol: ' + location.protocol, location.protocol === 'https:' ? '#00ff88' : '#ff4444');
     dbg('UserAgent: ' + navigator.userAgent.slice(0, 80), '#aaaaaa');
+
+    // --- 1б. Перевірка дозволу мікрофону ---
+    if (navigator.permissions) {
+        navigator.permissions.query({ name: 'microphone' }).then(result => {
+            const color = result.state === 'granted' ? '#00ff88' : result.state === 'prompt' ? '#ff9900' : '#ff4444';
+            dbg('Mic permission: ' + result.state, color);
+            result.onchange = () => dbg('Mic permission changed: ' + result.state, '#ffff00');
+        }).catch(() => dbg('Mic permission: cannot query', '#888888'));
+    }
 
     // --- 2. Голоси TTS — показуємо точні lang коди ---
     function checkVoices() {
