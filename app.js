@@ -52,12 +52,7 @@ const SpeechEngine = {
         this.recognition.lang = 'en-US';
         this.recognition.interimResults = true;
         this.recognition.maxAlternatives = 1;
-
-        // Android: continuous=true — no watchdog restarts needed, browser handles session
-        // Desktop: continuous=false + manual restart — more reliable on Chrome desktop
-        const isAndroid = /android/i.test(navigator.userAgent);
-        this.recognition.continuous = isAndroid ? true : false;
-        this.isAndroid = isAndroid;
+        this.recognition.continuous = false; // false on all platforms — we manage restart manually
 
         this.recognition.onresult = (e) => {
             if (!this.isPTTActive) return;
@@ -95,22 +90,15 @@ const SpeechEngine = {
             this.isEngineRunning = false;
             console.log("Recognition: END");
 
-            // Android uses continuous=true so onend only fires when we stop it ourselves
-            // Desktop uses continuous=false and needs watchdog restart
-            if (!this.isAndroid && this.isPTTActive && this.isStreamActive && !this.isRestarting) {
+            if (this.isPTTActive && this.isStreamActive && !this.isRestarting) {
                 this.isRestarting = true;
                 setTimeout(() => {
-                    if (!this.isEngineRunning && this.isPTTActive) {
-                        try {
-                            this.recognition.start();
-                        } catch(e) {
-                            console.warn("Restart failed:", e);
-                            this.isRestarting = false;
-                        }
-                    } else {
-                        this.isRestarting = false;
+                    this.isRestarting = false;
+                    if (this.isPTTActive && !this.isEngineRunning) {
+                        try { this.recognition.start(); }
+                        catch(e) { console.warn("Restart failed:", e); }
                     }
-                }, 300);
+                }, 250);
             }
         };
 
@@ -229,7 +217,8 @@ const SpeechEngine = {
         let maxVol = this.audioDataArray ? Math.max(...this.audioDataArray) : 0;
         const actualThreshold = 100 + speechSettings.noiseThreshold;
 
-        const starting = this.isPTTActive && !this.isEngineRunning && this.isStreamActive;
+        // Button disabled only at the very first startup moment, not during restarts
+        const starting = this.isPTTActive && !this.isEngineRunning && this.isStreamActive && !this.isRestarting;
         document.querySelectorAll('.mic-btn').forEach(btn => btn.disabled = starting);
         document.querySelectorAll('.speech-input').forEach(input => {
             if (!this.isPTTActive) {
@@ -843,6 +832,37 @@ if ('serviceWorker' in navigator) {
             dbg('TTS exception: ' + e.message, '#ff4444');
         }
     }, 1500);
+
+    // --- 3b. ІЗОЛЬОВАНИЙ тест SpeechRecognition — БЕЗ getUserMedia ---
+    // Якщо цей тест розпізнає слова → проблема в конфлікті мікрофону з AudioContext
+    // Якщо не розпізнає → проблема глибша (permissions, network, etc.)
+    const SpeechReq = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const testRec = new SpeechReq();
+    testRec.lang = 'en-US';
+    testRec.continuous = false;
+    testRec.interimResults = true;
+
+    const testBtn = document.createElement('button');
+    testBtn.textContent = '🎤 ТЕСТ МІК (без AudioContext)';
+    testBtn.style.cssText = 'display:block;width:100%;margin:4px 0;padding:6px;background:#1a4a1a;color:#00ff88;border:1px solid #00ff88;font-size:12px;cursor:pointer;';
+    log.appendChild(testBtn);
+
+    let testActive = false;
+    testRec.onstart  = () => dbg('TEST-REC: onstart ✓ — говори англійською!', '#00ff88');
+    testRec.onend    = () => { dbg('TEST-REC: onend', '#ff9900'); testActive = false; testBtn.textContent = '🎤 ТЕСТ МІК (без AudioContext)'; };
+    testRec.onerror  = (e) => dbg('TEST-REC ERROR: ' + e.error, '#ff4444');
+    testRec.onresult = (e) => {
+        const t = e.results[0][0].transcript;
+        dbg('TEST-REC 📝 РОЗПІЗНАНО: "' + t + '"', '#00ffff');
+    };
+
+    testBtn.onclick = () => {
+        if (testActive) { testRec.stop(); return; }
+        testActive = true;
+        testBtn.textContent = '⏹ зупинити тест';
+        dbg('--- Запуск ізольованого тесту мікрофону ---', '#ffff00');
+        try { testRec.start(); } catch(e) { dbg('TEST-REC start error: ' + e.message, '#ff4444'); }
+    };
 
     // --- 4. Патч toggleRecording ---
     const origToggle = SpeechEngine.toggleRecording.bind(SpeechEngine);
