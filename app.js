@@ -1,13 +1,26 @@
-let notebooks = JSON.parse(localStorage.getItem('scs_v16')) || [];
+let notebooks = [];
+let speechSettings = { noiseThreshold: 20, silenceTimeout: 3, rate: 0.9, pitch: 1.0, voiceURI: '' };
+
+// Safe localStorage wrapper (Android PWA / private mode safe)
+function safeGet(key, fallback) {
+    try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }
+    catch(e) { console.warn('safeGet failed:', key, e); return fallback; }
+}
+function safeSet(key, value) {
+    try { localStorage.setItem(key, JSON.stringify(value)); }
+    catch(e) { console.warn('safeSet failed:', key, e); }
+}
+
+notebooks = safeGet('scs_v16', []);
+speechSettings = safeGet('scs_speech_v4', speechSettings);
+
 let currentIdx = null;
 let trainingQueue = [];
 let currentCardIdx = 0;
 let totalCardsInSession = 0;
 
-let speechSettings = JSON.parse(localStorage.getItem('scs_speech_v4')) || {
-    noiseThreshold: 20, silenceTimeout: 3,
-    rate: 0.9, pitch: 1.0, voiceURI: ''
-};
+// Cached voices for speakText (avoids repeated getVoices() calls on Android)
+let availableVoices = [];
 
 // --- AUDIO COMPONENT (SPEECH ENGINE) ---
 const SpeechEngine = {
@@ -18,6 +31,7 @@ const SpeechEngine = {
     isStreamActive: false,
     isEngineRunning: false,
     isPTTActive: false,
+    isRestarting: false,   // Android: prevents overlapping restart attempts
     sessionTranscript: "",
 
     init() {
@@ -36,7 +50,7 @@ const SpeechEngine = {
 
         this.recognition = new SpeechReq();
         this.recognition.lang = 'en-US';
-        this.recognition.continuous = false;  // clean single-utterance sessions
+        this.recognition.continuous = false;
         this.recognition.interimResults = true;
         this.recognition.maxAlternatives = 1;
 
@@ -68,24 +82,36 @@ const SpeechEngine = {
 
         this.recognition.onstart = () => {
             this.isEngineRunning = true;
+            this.isRestarting = false;
             console.log("Recognition: START");
         };
 
         this.recognition.onend = () => {
             this.isEngineRunning = false;
             console.log("Recognition: END");
-            // Restart ONLY while user is actively recording
-            if (this.isPTTActive && this.isStreamActive) {
+
+            // Restart only while user is actively recording and not already restarting
+            if (this.isPTTActive && this.isStreamActive && !this.isRestarting) {
+                this.isRestarting = true;
+                // 300ms on Android is safer than 150ms — avoids InvalidStateError
                 setTimeout(() => {
                     if (!this.isEngineRunning && this.isPTTActive) {
-                        try { this.recognition.start(); } catch(e) {}
+                        try {
+                            this.recognition.start();
+                        } catch(e) {
+                            console.warn("Restart failed:", e);
+                            this.isRestarting = false;
+                        }
+                    } else {
+                        this.isRestarting = false;
                     }
-                }, 150);
+                }, 300);
             }
         };
 
         this.recognition.onerror = (e) => {
             this.isEngineRunning = false;
+            this.isRestarting = false;
             if (e.error === 'no-speech') return;
             console.warn("Recognition error:", e.error);
             if (this.isPTTActive && (e.error === 'network' || e.error === 'aborted')) {
@@ -102,15 +128,28 @@ const SpeechEngine = {
     async wakeUpHardware() {
         if (this.isStreamActive) return true;
         try {
-            this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            // Request mic with noise suppression — improves Android recognition stability
+            this.stream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true
+                }
+            });
+
             this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+            // IMPORTANT: resume() BEFORE connecting source — fixes Android AudioContext bug
+            if (this.audioContext.state === 'suspended') {
+                await this.audioContext.resume();
+            }
+
             const source = this.audioContext.createMediaStreamSource(this.stream);
             this.analyser = this.audioContext.createAnalyser();
             this.analyser.fftSize = 256;
             this.audioDataArray = new Uint8Array(this.analyser.frequencyBinCount);
             source.connect(this.analyser);
             this.isStreamActive = true;
-            if (this.audioContext.state === 'suspended') await this.audioContext.resume();
             this.init();
             this.draw();
             return true;
@@ -132,6 +171,7 @@ const SpeechEngine = {
 
         // Immediate visual feedback
         this.isPTTActive = true;
+        this.isRestarting = false;
         this.sessionTranscript = "";
         clearTimeout(this.silenceTimer);
         document.querySelectorAll('.mic-btn').forEach(btn => btn.classList.add('mic-active'));
@@ -157,6 +197,7 @@ const SpeechEngine = {
     stopRecording() {
         if (!this.isPTTActive) return;
         this.isPTTActive = false;
+        this.isRestarting = false;
         clearTimeout(this.silenceTimer);
         document.querySelectorAll('.mic-btn').forEach(btn => btn.classList.remove('mic-active'));
         document.querySelectorAll('.speech-input').forEach(i => i.placeholder = "Натисни для запису...");
@@ -182,9 +223,7 @@ const SpeechEngine = {
 
         let maxVol = this.audioDataArray ? Math.max(...this.audioDataArray) : 0;
         const actualThreshold = 100 + speechSettings.noiseThreshold;
-        
-        // --- UI HEALTH UPDATES ---
-        // Button is only disabled while PTT is active but engine hasn't started yet (startup moment)
+
         const starting = this.isPTTActive && !this.isEngineRunning && this.isStreamActive;
         document.querySelectorAll('.mic-btn').forEach(btn => btn.disabled = starting);
         document.querySelectorAll('.speech-input').forEach(input => {
@@ -193,9 +232,8 @@ const SpeechEngine = {
             }
         });
 
-        // Хвиля відображається завжди, коли є звук, але яскравіша при PTT
         let displayVal = (maxVol > actualThreshold) ? maxVol : 0;
-        
+
         this.visualData.push(displayVal);
         this.visualData.shift();
 
@@ -213,10 +251,9 @@ const SpeechEngine = {
             const W = rect.width;
             const H = rect.height;
             ctx.clearRect(0, 0, W, H);
-            
+
             ctx.beginPath();
-            
-            // Waveform: red dashes = engine reconnecting, dark = recording, grey = idle
+
             if (this.isStreamActive && !this.isEngineRunning) {
                 ctx.strokeStyle = '#e74c3c';
                 ctx.setLineDash([2, 4]);
@@ -226,16 +263,16 @@ const SpeechEngine = {
                 ctx.lineWidth = this.isPTTActive ? 3 : 1.5;
                 ctx.setLineDash([]);
             }
-            
+
             ctx.lineJoin = 'round';
-            
+
             for(let i=0; i < this.visualData.length; i++) {
                 const x = (W / this.visualData.length) * i;
                 const val = this.visualData[i];
                 const h = (val / 255) * H;
                 const y = (H - h) / 2;
-                
-                if(i === 0) ctx.moveTo(x, H / 2); 
+
+                if(i === 0) ctx.moveTo(x, H / 2);
                 else {
                     if (val > 0) ctx.lineTo(x, y + (i % 2 === 0 ? h : 0));
                     else ctx.lineTo(x, H / 2);
@@ -243,12 +280,11 @@ const SpeechEngine = {
             }
             ctx.stroke();
 
-            // Поріг малюємо пунктиром (червоним)
             const thresholdH = (actualThreshold / 255) * H;
             const thresholdYTop = (H - thresholdH) / 2;
             const thresholdYBottom = (H + thresholdH) / 2;
             ctx.beginPath();
-            ctx.strokeStyle = '#ff0000'; 
+            ctx.strokeStyle = '#ff0000';
             ctx.setLineDash([5, 5]);
             ctx.moveTo(0, thresholdYTop); ctx.lineTo(W, thresholdYTop);
             ctx.moveTo(0, thresholdYBottom); ctx.lineTo(W, thresholdYBottom);
@@ -263,7 +299,7 @@ const SpeechEngine = {
 
     killAll() {
         this.isPTTActive = false;
-        this.ignoreResults = true;
+        this.isRestarting = false;
         if (this.recognition) try { this.recognition.stop(); } catch(e) {}
         this.isStreamActive = false;
         if(this.stream) this.stream.getTracks().forEach(t => t.stop());
@@ -289,14 +325,14 @@ const SpeechEngine = {
 };
 
 function checkVoiceAnswer() {
-    const sInput = document.querySelector('.training-modal .speech-input'); 
+    const sInput = document.querySelector('.training-modal .speech-input');
     const input = sInput ? sInput.value : document.querySelector('.speech-input').value;
     const currentCard = trainingQueue[currentCardIdx];
     if(!input || !currentCard) return;
-    
+
     const correct = currentCard.en || currentCard.code;
     const dist = SpeechEngine.levenshtein(input, correct);
-    const limit = Math.floor(correct.length / 5) + 1; 
+    const limit = Math.floor(correct.length / 5) + 1;
 
     if (dist <= limit) {
         flipCard();
@@ -308,22 +344,22 @@ function checkVoiceAnswer() {
     }
 }
 
-// --- ЛОГІКА SM-2 ---
+// --- SM-2 LOGIC ---
 function startTraining() {
     const nb = notebooks[currentIdx];
     if(!nb.rows || nb.rows.length === 0) return alert("Порожньо!");
-    
+
     document.querySelectorAll('.modal-overlay').forEach(m => m.style.display = 'none');
     document.getElementById('trainingTitle').innerText = nb.name;
-    
+
     const now = new Date();
     trainingQueue = nb.rows.filter(card => !card.nextReview || new Date(card.nextReview) <= now);
 
     if(trainingQueue.length === 0) return alert("Все вивчено на сьогодні!");
-    
+
     totalCardsInSession = trainingQueue.length;
     currentCardIdx = 0;
-    
+
     updateProgress();
     showCard();
     openModal('trainingOverlay');
@@ -343,26 +379,26 @@ function updateProgress() {
 function gradeCard(quality) {
     const card = trainingQueue[currentCardIdx];
     if (!card) return;
-    
+
     if (!card.ease) card.ease = 2.5;
     if (!card.reps) card.reps = 0;
     if (!card.interval) card.interval = 0;
 
     if (quality < 3) { card.reps = 0; card.interval = 0; }
-    else if (quality === 3) { 
-        if (card.reps === 0) card.interval = 1; 
+    else if (quality === 3) {
+        if (card.reps === 0) card.interval = 1;
         else card.interval = Math.round(card.interval * card.ease);
         card.reps++;
     } else { card.interval = 4; card.reps++; }
 
     card.ease = Math.max(1.3, card.ease + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02)));
-    
+
     if (quality === 1) trainingQueue.push(trainingQueue.splice(currentCardIdx, 1)[0]);
     else if (quality === 2) {
         const moved = trainingQueue.splice(currentCardIdx, 1)[0];
         trainingQueue.splice(Math.min(trainingQueue.length, 2), 0, moved);
-    } 
-    else { 
+    }
+    else {
         const d = new Date(); d.setDate(d.getDate() + card.interval);
         card.nextReview = d.toISOString();
         trainingQueue.splice(currentCardIdx, 1);
@@ -381,29 +417,29 @@ function gradeCard(quality) {
 
 function toggleTheme() { document.body.dataset.theme = document.body.dataset.theme === 'dark' ? 'light' : 'dark'; }
 
-function openModal(id) { 
+function openModal(id) {
     if(id === 'settingsOverlay') syncSettingsUI();
-    document.getElementById(id).style.display = 'flex'; 
+    document.getElementById(id).style.display = 'flex';
 }
 
-function closeAllModals() { 
+function closeAllModals() {
     const isTr = document.getElementById('trainingOverlay').style.display === 'flex';
     if (isTr && trainingQueue.length > 0 && !confirm("Вийти?")) return;
-    
+
     SpeechEngine.killAll();
-    document.querySelectorAll('.modal-overlay').forEach(m => m.style.display = 'none'); 
+    document.querySelectorAll('.modal-overlay').forEach(m => m.style.display = 'none');
     resetCard();
 }
 
 let _ttsTimeout = null;
 function updateSpeechSetting(key, val) {
     speechSettings[key] = parseFloat(val);
-    
+
     const map = {'rate':'valRate', 'pitch':'valPitch', 'noiseThreshold':'valNoise', 'silenceTimeout':'valTimeout'};
     const el = document.getElementById(map[key]);
     if (el) el.innerText = val;
-    localStorage.setItem('scs_speech_v4', JSON.stringify(speechSettings));
-    
+    safeSet('scs_speech_v4', speechSettings);
+
     if (key === 'rate' || key === 'pitch') {
         clearTimeout(_ttsTimeout);
         _ttsTimeout = setTimeout(() => { speakText("Voice test"); }, 300);
@@ -412,29 +448,31 @@ function updateSpeechSetting(key, val) {
 
 function updateVoice(uri) {
     speechSettings.voiceURI = uri;
-    localStorage.setItem('scs_speech_v4', JSON.stringify(speechSettings));
+    safeSet('scs_speech_v4', speechSettings);
     speakText("Voice test");
 }
 
 function populateVoices() {
+    // Cache globally — avoids repeated getVoices() calls on Android
+    availableVoices = speechSynthesis.getVoices();
     const select = document.getElementById('voiceSelect');
     if (!select) return;
-    
+
     select.innerHTML = '<option value="">Відпустити на розсуд системи</option>';
-    const voices = speechSynthesis.getVoices().filter(v => v.lang.startsWith('en'));
-    
-    voices.forEach(v => {
-        const opt = document.createElement('option');
-        opt.value = v.voiceURI;
-        opt.textContent = `${v.name} (${v.lang})`;
-        select.appendChild(opt);
-    });
+    availableVoices
+        .filter(v => v.lang.startsWith('en'))
+        .forEach(v => {
+            const opt = document.createElement('option');
+            opt.value = v.voiceURI;
+            opt.textContent = `${v.name} (${v.lang})`;
+            select.appendChild(opt);
+        });
 }
 
 function syncSettingsUI() {
     const select = document.getElementById('voiceSelect');
     if (select) select.value = speechSettings.voiceURI || '';
-    
+
     const map = {
         'inputRate': 'rate', 'valRate': 'rate',
         'inputPitch': 'pitch', 'valPitch': 'pitch',
@@ -453,21 +491,24 @@ function syncSettingsUI() {
 function speakText(text) {
     if (!text) return;
     speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    const voices = speechSynthesis.getVoices();
 
-    if (speechSettings.voiceURI) {
-        const exact = voices.find(v => v.voiceURI === speechSettings.voiceURI);
-        if (exact) utterance.voice = exact;
-    }
-    if (!utterance.voice) {
-        const fallback = voices.find(v => v.lang.startsWith('en'));
-        if (fallback) utterance.voice = fallback;
-    }
+    // Android: small delay after cancel() prevents silent failures
+    setTimeout(() => {
+        const utterance = new SpeechSynthesisUtterance(text);
+        let voice = null;
 
-    utterance.rate = speechSettings.rate;
-    utterance.pitch = speechSettings.pitch;
-    speechSynthesis.speak(utterance);
+        if (speechSettings.voiceURI) {
+            voice = availableVoices.find(v => v.voiceURI === speechSettings.voiceURI) || null;
+        }
+        if (!voice) {
+            voice = availableVoices.find(v => v.lang.startsWith('en')) || null;
+        }
+        if (voice) utterance.voice = voice;
+
+        utterance.rate = speechSettings.rate;
+        utterance.pitch = speechSettings.pitch;
+        speechSynthesis.speak(utterance);
+    }, 150);
 }
 
 function speakCurrentCard() {
@@ -494,7 +535,7 @@ function flipCard() {
         document.getElementById('trainingActions').style.display = 'block';
         document.getElementById('speechPanel').style.display = 'none';
         document.getElementById('hintText').style.display = 'none';
-        setTimeout(speakCurrentCard, 250); 
+        setTimeout(speakCurrentCard, 250);
     }
 }
 
@@ -530,6 +571,7 @@ function insertCardRow(data = {ua:'', code:'', en:'', trans:''}, num = null) {
 }
 
 function reindex() { document.querySelectorAll('.card-num').forEach((s, i) => s.innerText = `#${i+1}`); }
+
 function saveAdminData() {
     notebooks[currentIdx].rows = Array.from(document.querySelectorAll('.admin-card')).map(c => ({
         ua: c.querySelector('.v-ua').value, code: c.querySelector('.v-code').value,
@@ -557,12 +599,12 @@ function addNotebookWithFile(e) {
 function updateFromFile(e) {
     const file = e.target.files[0]; if(!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => { 
+    reader.onload = (ev) => {
         notebooks[currentIdx].name = file.name.replace('.json','');
-        notebooks[currentIdx].rows = JSON.parse(ev.target.result); 
-        saveData(); 
-        alert("Оновлено!"); 
-        closeAllModals(); 
+        notebooks[currentIdx].rows = JSON.parse(ev.target.result);
+        saveData();
+        alert("Оновлено!");
+        closeAllModals();
     };
     reader.readAsText(file);
     e.target.value = '';
@@ -574,7 +616,7 @@ function exportCurrentNotebook() {
 }
 
 function deleteCurrentNotebook() { if(confirm("Видалити?")) { notebooks.splice(currentIdx, 1); saveData(); closeAllModals(); } }
-function saveData() { localStorage.setItem('scs_v16', JSON.stringify(notebooks)); renderShelf(); }
+function saveData() { safeSet('scs_v16', notebooks); renderShelf(); }
 
 function renderShelf() {
     const shelf = document.getElementById('shelf');
@@ -589,7 +631,7 @@ function renderShelf() {
     });
 }
 
-// ПРИВ'ЯЗКА ПОДІЙ TAP-TO-TALK
+// TAP-TO-TALK binding
 function initPTT() {
     document.querySelectorAll('.mic-btn').forEach(btn => {
         btn.onclick = (e) => {
@@ -606,11 +648,17 @@ function applyUpdate() {
 }
 
 window.app = {
-    checkVoiceAnswer, updateSpeechSetting, updateVoice, toggleTheme, openModal, closeAllModals, openAdmin, insertCardRow, saveAdminData, addNotebook, addNotebookWithFile, updateFromFile, exportCurrentNotebook, deleteCurrentNotebook, reindex, applyUpdate
+    checkVoiceAnswer, updateSpeechSetting, updateVoice, toggleTheme, openModal, closeAllModals,
+    openAdmin, insertCardRow, saveAdminData, addNotebook, addNotebookWithFile, updateFromFile,
+    exportCurrentNotebook, deleteCurrentNotebook, reindex, applyUpdate
 };
 
+// Voices: onvoiceschanged fires on desktop; on Android call immediately + on event
+// setTimeout(1000) is a fallback for Android versions where onvoiceschanged never fires
 speechSynthesis.onvoiceschanged = populateVoices;
 populateVoices();
+setTimeout(populateVoices, 1000);
+
 renderShelf();
 initPTT();
 
@@ -618,7 +666,7 @@ initPTT();
 const yearEl = document.getElementById('currentYear');
 if (yearEl) yearEl.innerText = new Date().getFullYear();
 
-// BROWSER SPEECH SUPPORT CHECK
+// Browser speech support check
 if (!(window.SpeechRecognition || window.webkitSpeechRecognition)) {
     document.body.classList.add('no-speech');
     const voicePanel = document.getElementById('voiceSettingsContent');
@@ -631,7 +679,7 @@ if (!(window.SpeechRecognition || window.webkitSpeechRecognition)) {
     }
 }
 
-// SERVICE WORKER REGISTRATION & UPDATE DETECTION
+// Service Worker registration & update detection
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
         navigator.serviceWorker.register('sw.js').then(reg => {
