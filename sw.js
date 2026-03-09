@@ -1,4 +1,4 @@
-const CACHE_NAME = 'smart-code-v5';
+const CACHE_NAME = 'smart-code-v6';
 const ASSETS = [
     './',
     './index.html',
