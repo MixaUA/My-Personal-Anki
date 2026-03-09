@@ -16,6 +16,7 @@ const SpeechEngine = {
     recognition: null, audioContext: null, analyser: null, stream: null, animationId: null,
     visualData: new Array(150).fill(0), 
     audioDataArray: null,
+    silenceTimer: null,
     isListening: false, 
     lastSoundTime: 0,
     isStreamActive: false,
@@ -74,6 +75,14 @@ const SpeechEngine = {
                 input.value = currentDisplay;
                 input.style.color = ''; // Скидаємо колір при новому ввіді
             });
+
+            // Auto-stop logic
+            clearTimeout(this.silenceTimer);
+            if (currentDisplay.length > 0) {
+                this.silenceTimer = setTimeout(() => {
+                    if (this.isPTTActive) this.stopRecording();
+                }, speechSettings.silenceTimeout * 1000);
+            }
         };
 
         this.recognition.onstart = () => { 
@@ -83,12 +92,7 @@ const SpeechEngine = {
 
         this.recognition.onend = () => {
             this.isEngineRunning = false;
-            console.warn("Recognition: STOPPED. Watchdog restarting...");
-            if (this.isStreamActive) {
-                setTimeout(() => {
-                    if (!this.isEngineRunning) try { this.recognition.start(); } catch(e) {}
-                }, 100);
-            }
+            console.warn("Recognition: STOPPED.");
         };
 
         this.recognition.onerror = (e) => {
@@ -128,8 +132,13 @@ const SpeechEngine = {
         }
     },
 
-    // ПУШ (pointerdown)
-    async press() {
+    // ТАП / КЛІК для перемикання запису
+    async toggleRecording() {
+        if (this.isPTTActive) {
+            this.stopRecording();
+            return;
+        }
+
         const wasInactive = !this.isStreamActive;
         this.isPTTActive = true;
         
@@ -138,28 +147,28 @@ const SpeechEngine = {
 
         this.ignoreResults = false;
         this.sessionTranscript = "";
+        clearTimeout(this.silenceTimer);
 
-        // Якщо це "холодний старт" (перше натискання з запитом дозволу)
         if (wasInactive || !this.isEngineRunning) {
             document.querySelectorAll('.speech-input').forEach(i => i.placeholder = "Waking up... please wait 🎙️");
-            // Чекаємо поки двигун реально заведеться
             const checkReady = setInterval(() => {
                 if (this.isEngineRunning) {
                     clearInterval(checkReady);
-                    if (this.isPTTActive) { // Якщо користувач все ще тримає кнопку
+                    if (this.isPTTActive) { 
                         this.pttStartIndex = this.globalResultsCount;
-                        document.querySelectorAll('.speech-input').forEach(i => i.placeholder = "Press and Hold to Speak...");
+                        document.querySelectorAll('.speech-input').forEach(i => i.placeholder = "Listening...");
                     }
                 }
             }, 100);
         } else {
-            // Звичайний швидкий старт (двигун уже теплий)
             this.pttStartIndex = this.globalResultsCount;
             document.querySelectorAll('.mic-btn').forEach(btn => btn.classList.add('mic-active'));
-            document.querySelectorAll('.speech-input').forEach(i => i.value = "");
+            document.querySelectorAll('.speech-input').forEach(i => {
+                i.value = "";
+                i.placeholder = "Listening...";
+            });
         }
 
-        // Візуальний відгук (завжди додаємо клас для пульсації)
         document.querySelectorAll('.mic-btn').forEach(btn => btn.classList.add('mic-active'));
         
         if (!this.isEngineRunning) {
@@ -167,11 +176,14 @@ const SpeechEngine = {
         }
     },
 
-    // ВІДПУСТИВ (pointerup)
-    release() {
+    stopRecording() {
         if (!this.isPTTActive) return;
         this.isPTTActive = false;
+        clearTimeout(this.silenceTimer);
         document.querySelectorAll('.mic-btn').forEach(btn => btn.classList.remove('mic-active'));
+        document.querySelectorAll('.speech-input').forEach(i => i.placeholder = "Tap to Speak...");
+        
+        try { this.recognition.stop(); } catch(e) {}
         
         const isTraining = document.getElementById('trainingOverlay').style.display === 'flex';
         if (isTraining) {
@@ -198,10 +210,10 @@ const SpeechEngine = {
         document.querySelectorAll('.mic-btn').forEach(btn => btn.disabled = !isHealthy);
         document.querySelectorAll('.speech-input').forEach(input => {
             if (!isHealthy) {
-                input.placeholder = "Connecting... please wait ⏳";
+                input.placeholder = "Connecting...";
                 if (!input.value) input.value = ""; // Force clear to show placeholder
-            } else {
-                input.placeholder = "Press and Hold to Speak...";
+            } else if (!this.isPTTActive) {
+                input.placeholder = "Tap to Speak...";
             }
         });
 
@@ -641,23 +653,13 @@ function renderShelf() {
     });
 }
 
-// ПРИВ'ЯЗКА ПОДІЙ PUSH-TO-TALK
+// ПРИВ'ЯЗКА ПОДІЙ TAP-TO-TALK
 function initPTT() {
     document.querySelectorAll('.mic-btn').forEach(btn => {
-        // Миша + Тач
-        btn.addEventListener('pointerdown', (e) => {
+        btn.onclick = (e) => {
             e.preventDefault();
-            SpeechEngine.press();
-        });
-        
-        const stopHandler = (e) => {
-            e.preventDefault();
-            SpeechEngine.release();
+            SpeechEngine.toggleRecording();
         };
-
-        btn.addEventListener('pointerup', stopHandler);
-        btn.addEventListener('pointerleave', stopHandler);
-        btn.addEventListener('pointercancel', stopHandler);
     });
 }
 
@@ -673,5 +675,3 @@ initPTT();
 // Auto-update footer year
 const yearEl = document.getElementById('currentYear');
 if (yearEl) yearEl.innerText = new Date().getFullYear();
-
-// SpeechEngine.wakeUpHardware(); // ТЕПЕР ВИМКНЕНО ПРИ СТАРТІ: Прокинеться при першому натисканні кнопки!
