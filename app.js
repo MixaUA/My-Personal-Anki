@@ -231,6 +231,19 @@ const SpeechEngine = {
                 }
             }
             ctx.stroke();
+
+            // Draw threshold lines
+            const threshY = (actualThreshold / 255) * (H / 2);
+            ctx.beginPath();
+            ctx.strokeStyle = 'rgba(231, 76, 60, 0.3)';
+            ctx.setLineDash([5, 5]);
+            ctx.lineWidth = 1;
+            ctx.moveTo(0, H / 2 - threshY);
+            ctx.lineTo(W, H / 2 - threshY);
+            ctx.moveTo(0, H / 2 + threshY);
+            ctx.lineTo(W, H / 2 + threshY);
+            ctx.stroke();
+            ctx.setLineDash([]);
         });
 
         if (this.isStreamActive || this.isPTTActive) {
