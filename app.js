@@ -89,11 +89,21 @@ const SpeechEngine = {
 
         this.recognition.onend = () => {
             this.isEngineRunning = false;
-            console.warn("Recognition: STOPPED.");
+            console.warn("Recognition: STOPPED. Watchdog restarting...");
+            if (this.isStreamActive) {
+                setTimeout(() => {
+                    if (!this.isEngineRunning) try { this.recognition.start(); } catch(e) {}
+                }, 100);
+            }
         };
 
         this.recognition.onerror = (e) => {
             if (e.error !== 'no-speech') console.error("Recognition ERROR:", e.error);
+            if (this.isStreamActive && (e.error === 'network' || e.error === 'aborted')) {
+                setTimeout(() => {
+                    if (!this.isEngineRunning) try { this.recognition.start(); } catch(err) {}
+                }, 500);
+            }
         };
     },
 
@@ -174,19 +184,8 @@ const SpeechEngine = {
         document.querySelectorAll('.mic-btn').forEach(btn => btn.classList.remove('mic-active'));
         document.querySelectorAll('.speech-input').forEach(i => i.placeholder = "Tap to Speak...");
 
-        // Full hardware teardown so next tap starts clean
-        if (this.recognition) try { this.recognition.stop(); } catch(e) {}
-        this.isStreamActive = false;
-        this.isEngineRunning = false;
-        if (this.stream) this.stream.getTracks().forEach(t => t.stop());
-        if (this.audioContext && this.audioContext.state !== 'closed') this.audioContext.close();
-        cancelAnimationFrame(this.animationId);
-        this.animationId = null;
-        this.audioContext = null;
-        this.analyser = null;
-        this.stream = null;
-        this.audioDataArray = null;
-
+        // Do NOT kill hardware — keep stream + AudioContext alive for next tap
+        // Just stop accepting new results until next tap
         const isTraining = document.getElementById('trainingOverlay').style.display === 'flex';
         if (isTraining) {
             const sInput = document.querySelector('.speech-input');
@@ -240,10 +239,16 @@ const SpeechEngine = {
             
             ctx.beginPath();
             
-            // Waveform color: active recording = dark, idle = grey
-            ctx.strokeStyle = this.isPTTActive ? '#1a1a1a' : '#cccccc';
-            ctx.lineWidth = this.isPTTActive ? 3 : 1.5;
-            ctx.setLineDash([]);
+            // Waveform: red dashes = engine reconnecting, dark = recording, grey = idle
+            if (this.isStreamActive && !this.isEngineRunning) {
+                ctx.strokeStyle = '#e74c3c';
+                ctx.setLineDash([2, 4]);
+                ctx.lineWidth = 2;
+            } else {
+                ctx.strokeStyle = this.isPTTActive ? '#1a1a1a' : '#cccccc';
+                ctx.lineWidth = this.isPTTActive ? 3 : 1.5;
+                ctx.setLineDash([]);
+            }
             
             ctx.lineJoin = 'round';
             
