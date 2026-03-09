@@ -16,6 +16,9 @@
     <link rel="shortcut icon" href="icon/favicon.ico">
 </head>
 <body>
+    <div id="updateBanner" style="display:none; position:fixed; top:0; left:0; width:100%; background:var(--anki-red); color:white; padding:15px; text-align:center; font-weight:bold; z-index:9999; box-shadow: 0 4px 10px rgba(0,0,0,0.3);">
+        Доступна нова версія! <button onclick="app.applyUpdate()" style="margin-left:15px; padding:6px 16px; border:none; background:white; color:var(--anki-red); font-weight:bold; border-radius:5px; cursor:pointer;">Оновити</button>
+    </div>
 
     <header>
         <h1>My Personal Anki</h1>
@@ -73,10 +76,6 @@
         <div class="modal-content hand-drawn-border" onclick="event.stopPropagation()">
             <span class="close-x" onclick="closeAllModals()">✖</span>
             <h2>Голос</h2>
-            <div class="filter-group">
-                <button class="filter-btn" id="btnMale" onclick="setGender('male')">👨 Male</button>
-                <button class="filter-btn" id="btnFemale" onclick="setGender('female')">👩 Female</button>
-            </div>
             <div class="settings-row" style="margin-top: 10px;">
                 <label>Оберіть голос:</label>
                 <select id="voiceSelect" onchange="app.updateVoice(this.value)" style="width: 100%; padding: 8px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-color); color: var(--text-color); font-family: inherit; margin-top: 5px; cursor: pointer;"></select>
@@ -146,19 +145,10 @@
         </div>
     </div>
 
-    <footer style="margin-top: auto; text-align:center; padding: 20px; font-size: 0.9rem; color: var(--border-color); opacity: 0.8;">
+    <footer style="text-align:center; padding: 20px; font-size: 0.9rem; color: var(--border-color); opacity: 0.8;">
         © <span id="currentYear"></span> Mykhailo Anisimov
     </footer>
 
     <script src="app.js"></script>
-    <script>
-        if ('serviceWorker' in navigator) {
-            window.addEventListener('load', () => {
-                navigator.serviceWorker.register('sw.js')
-                    .then(reg => console.log('SW registered!', reg))
-                    .catch(err => console.log('SW registration failed', err));
-            });
-        }
-    </script>
 </body>
 </html>
