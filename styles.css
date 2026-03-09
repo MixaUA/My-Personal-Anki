@@ -66,9 +66,14 @@ h1 { font-family: 'Indie Flower', cursive; font-size: 2rem; margin: 0; }
 }
 
 @media (max-width: 600px) {
-    .shelf { grid-template-columns: repeat(auto-fill, minmax(70px, 1fr)); gap: 10px; padding: 10px; }
+    body { padding: 10px; }
+    .shelf { 
+        grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); 
+        gap: 12px; 
+        padding: 10px;
+    }
     .notebook { width: 100%; }
-    .notebook-cover { height: 90px; font-size: 1rem; padding: 5px; }
+    .notebook-cover { height: 100px; font-size: 0.9rem; padding: 8px; }
     .flashcard { min-height: 250px; }
     .txt-code, .txt-en { font-size: 1.5rem; }
     .txt-ua, .txt-trans { font-size: 1rem; }
@@ -81,8 +86,13 @@ h1 { font-family: 'Indie Flower', cursive; font-size: 2rem; margin: 0; }
 .no-speech #settingsOverlay .anki-button { display: none !important; }
 
 .shelf { 
-    display: grid; grid-template-columns: repeat(auto-fill, 150px); 
-    gap: 20px; width: 100%; max-width: 1100px; justify-content: center; padding: 20px 40px;
+    display: grid; 
+    grid-template-columns: repeat(auto-fill, minmax(130px, 150px)); 
+    gap: 20px; 
+    width: 100%; 
+    max-width: 1100px; 
+    justify-content: center; 
+    padding: 20px;
 }
 
 .notebook { cursor: pointer; text-align: center; transition: 0.3s; width: 150px; }
