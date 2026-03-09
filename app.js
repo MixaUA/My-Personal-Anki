@@ -12,102 +12,93 @@ let speechSettings = JSON.parse(localStorage.getItem('scs_speech_v4')) || {
 // --- AUDIO COMPONENT (SPEECH ENGINE) ---
 const SpeechEngine = {
     recognition: null, audioContext: null, analyser: null, stream: null, animationId: null,
-    visualData: new Array(150).fill(0), 
+    visualData: new Array(150).fill(0),
     audioDataArray: null,
     silenceTimer: null,
-    isListening: false,
     isStreamActive: false,
-    ignoreResults: false,
-    isEngineRunning: false, 
-    sessionTranscript: "", 
-    pttStartIndex: 0,      // Індекс результатів Google на момент натискання кнопки
-    isPTTActive: false,    // Флаг того, що кнопка натиснута (Push-to-Talk)
-    globalResultsCount: 0, // Загальна кількість результатів, яку ми бачили
+    isEngineRunning: false,
+    isPTTActive: false,
+    sessionTranscript: "",
 
     init() {
-        if (this.recognition) return; 
+        if (this.recognition) return;
         const SpeechReq = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (!SpeechReq) return;
-        
+        if (!SpeechReq) {
+            document.querySelectorAll('.mic-btn').forEach(btn => {
+                btn.disabled = true;
+                btn.title = "Мікрофон підтримується лише у Chrome / Edge";
+            });
+            document.querySelectorAll('.speech-input').forEach(i =>
+                i.placeholder = "🚫 Додаток не підтримує цю функцію. Використовуйте Chrome або Edge."
+            );
+            return;
+        }
+
         this.recognition = new SpeechReq();
         this.recognition.lang = 'en-US';
-        this.recognition.continuous = true; 
+        this.recognition.continuous = false;  // clean single-utterance sessions
         this.recognition.interimResults = true;
+        this.recognition.maxAlternatives = 1;
 
         this.recognition.onresult = (e) => {
-            // Завжди оновлюємо глобальний стан
-            this.globalResultsCount = e.results.length;
+            if (!this.isPTTActive) return;
 
-            if (!this.isPTTActive || this.ignoreResults) return;
-            
-            let finalParts = [];
-            let interim = "";
-
-            // Зчитуємо тільки те, що було сказано ПІСЛЯ натискання
-            for (let i = this.pttStartIndex; i < e.results.length; ++i) {
-                if (!e.results[i]) continue;
-                const transcript = e.results[i][0].transcript.trim();
-                // Кожне слово обробляємо окремо для точності
-                if (e.results[i].isFinal) {
-                    finalParts.push(transcript);
-                } else {
-                    interim += transcript;
-                }
+            let finalText = "";
+            let interimText = "";
+            for (let i = 0; i < e.results.length; i++) {
+                const t = e.results[i][0].transcript.trim();
+                if (e.results[i].isFinal) finalText += t + " ";
+                else interimText += t;
             }
-
-            this.sessionTranscript = finalParts.join(" ");
-            
-            const cleanText = (text) => {
-                const words = text.toLowerCase().split(/\s+/);
-                return words.filter((word, i) => {
-                    // Видаляємо дублікати, що йдуть підряд
-                    return word && (i === 0 || word !== words[i-1]);
-                }).join(" ");
-            };
-
-            const fullText = (this.sessionTranscript + " " + interim).trim();
-            const currentDisplay = cleanText(fullText);
+            if (finalText) this.sessionTranscript += finalText;
+            const display = (this.sessionTranscript + interimText).trim();
 
             document.querySelectorAll('.speech-input').forEach(input => {
-                input.value = currentDisplay;
-                input.style.color = ''; // Скидаємо колір при новому ввіді
+                input.value = display;
+                input.style.color = '';
             });
 
-            // Auto-stop logic
             clearTimeout(this.silenceTimer);
-            if (currentDisplay.length > 0) {
+            if (display.length > 0) {
                 this.silenceTimer = setTimeout(() => {
                     if (this.isPTTActive) this.stopRecording();
                 }, speechSettings.silenceTimeout * 1000);
             }
         };
 
-        this.recognition.onstart = () => { 
-            this.isEngineRunning = true; 
-            console.log("Recognition: ACTIVE");
+        this.recognition.onstart = () => {
+            this.isEngineRunning = true;
+            console.log("Recognition: START");
         };
 
         this.recognition.onend = () => {
             this.isEngineRunning = false;
-            console.warn("Recognition: STOPPED. Watchdog restarting...");
-            if (this.isStreamActive) {
+            console.log("Recognition: END");
+            // Restart ONLY while user is actively recording
+            if (this.isPTTActive && this.isStreamActive) {
                 setTimeout(() => {
-                    if (!this.isEngineRunning) try { this.recognition.start(); } catch(e) {}
-                }, 100);
+                    if (!this.isEngineRunning && this.isPTTActive) {
+                        try { this.recognition.start(); } catch(e) {}
+                    }
+                }, 150);
             }
         };
 
         this.recognition.onerror = (e) => {
-            if (e.error !== 'no-speech') console.error("Recognition ERROR:", e.error);
-            if (this.isStreamActive && (e.error === 'network' || e.error === 'aborted')) {
+            this.isEngineRunning = false;
+            if (e.error === 'no-speech') return;
+            console.warn("Recognition error:", e.error);
+            if (this.isPTTActive && (e.error === 'network' || e.error === 'aborted')) {
                 setTimeout(() => {
-                    if (!this.isEngineRunning) try { this.recognition.start(); } catch(err) {}
+                    if (!this.isEngineRunning && this.isPTTActive) {
+                        try { this.recognition.start(); } catch(err) {}
+                    }
                 }, 500);
             }
         };
     },
 
-    // Вмикає залізо (мікрофон + візуалізація)
+    // Wake up AudioContext + mic stream (once per training session)
     async wakeUpHardware() {
         if (this.isStreamActive) return true;
         try {
@@ -119,59 +110,45 @@ const SpeechEngine = {
             this.audioDataArray = new Uint8Array(this.analyser.frequencyBinCount);
             source.connect(this.analyser);
             this.isStreamActive = true;
-            
             if (this.audioContext.state === 'suspended') await this.audioContext.resume();
-            
             this.init();
-            if (!this.isEngineRunning) try { this.recognition.start(); } catch(e) {}
-            
             this.draw();
             return true;
         } catch (e) {
-            console.error("Hardware Alert:", e);
+            console.error("Microphone error:", e);
+            document.querySelectorAll('.speech-input').forEach(i =>
+                i.placeholder = "🚫 Немає доступу до мікрофону"
+            );
             return false;
         }
     },
 
-    // ТАП / КЛІК для перемикання запису
+    // TAP: toggle recording on / off
     async toggleRecording() {
         if (this.isPTTActive) {
             this.stopRecording();
             return;
         }
 
-        const wasInactive = !this.isStreamActive;
+        // Immediate visual feedback
         this.isPTTActive = true;
-        
-        const ok = await this.wakeUpHardware();
-        if (!ok) { this.isPTTActive = false; return; }
-
-        this.ignoreResults = false;
         this.sessionTranscript = "";
         clearTimeout(this.silenceTimer);
+        document.querySelectorAll('.mic-btn').forEach(btn => btn.classList.add('mic-active'));
+        document.querySelectorAll('.speech-input').forEach(i => {
+            i.value = "";
+            i.placeholder = "Підключення... 🎙️";
+        });
 
-        if (wasInactive || !this.isEngineRunning) {
-            document.querySelectorAll('.speech-input').forEach(i => i.placeholder = "Waking up... please wait 🎙️");
-            const checkReady = setInterval(() => {
-                if (this.isEngineRunning) {
-                    clearInterval(checkReady);
-                    if (this.isPTTActive) { 
-                        this.pttStartIndex = this.globalResultsCount;
-                        document.querySelectorAll('.speech-input').forEach(i => i.placeholder = "Listening...");
-                    }
-                }
-            }, 100);
-        } else {
-            this.pttStartIndex = this.globalResultsCount;
-            document.querySelectorAll('.mic-btn').forEach(btn => btn.classList.add('mic-active'));
-            document.querySelectorAll('.speech-input').forEach(i => {
-                i.value = "";
-                i.placeholder = "Listening...";
-            });
+        const ok = await this.wakeUpHardware();
+        if (!ok) {
+            this.isPTTActive = false;
+            document.querySelectorAll('.mic-btn').forEach(btn => btn.classList.remove('mic-active'));
+            return;
         }
 
-        document.querySelectorAll('.mic-btn').forEach(btn => btn.classList.add('mic-active'));
-        
+        document.querySelectorAll('.speech-input').forEach(i => i.placeholder = "Слухаю...");
+
         if (!this.isEngineRunning) {
             try { this.recognition.start(); } catch(e) {}
         }
@@ -182,16 +159,16 @@ const SpeechEngine = {
         this.isPTTActive = false;
         clearTimeout(this.silenceTimer);
         document.querySelectorAll('.mic-btn').forEach(btn => btn.classList.remove('mic-active'));
-        document.querySelectorAll('.speech-input').forEach(i => i.placeholder = "Tap to Speak...");
+        document.querySelectorAll('.speech-input').forEach(i => i.placeholder = "Натисни для запису...");
 
-        // Do NOT kill hardware — keep stream + AudioContext alive for next tap
-        // Just stop accepting new results until next tap
+        // Stop current session; onend will NOT restart because isPTTActive=false
+        if (this.isEngineRunning) try { this.recognition.stop(); } catch(e) {}
+
+        // Process answer if in training mode
         const isTraining = document.getElementById('trainingOverlay').style.display === 'flex';
         if (isTraining) {
             const sInput = document.querySelector('.speech-input');
-            if (sInput && sInput.value.trim() !== "") {
-                checkVoiceAnswer();
-            }
+            if (sInput && sInput.value.trim() !== "") checkVoiceAnswer();
         }
     },
 
