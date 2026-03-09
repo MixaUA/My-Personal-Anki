@@ -54,6 +54,25 @@ h1 { font-family: 'Indie Flower', cursive; font-size: 2rem; margin: 0; }
 .top-menu { display: flex; gap: 15px; }
 .top-btn { font-size: 1.5rem; cursor: pointer; }
 
+.run-btn { background: var(--anki-blue); color: #fff; padding: 15px 30px; font-size: 1.5rem; }
+
+.mic-btn {
+    touch-action: manipulation;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
+@media (max-width: 600px) {
+    .shelf { grid-template-columns: repeat(auto-fill, minmax(70px, 1fr)); gap: 10px; padding: 10px; }
+    .notebook { width: 100%; }
+    .notebook-cover { height: 90px; font-size: 1rem; padding: 5px; }
+    .flashcard { min-height: 250px; }
+    .txt-code, .txt-en { font-size: 1.5rem; }
+    .txt-ua, .txt-trans { font-size: 1rem; }
+    #settingsOverlay .filter-group { display: none; }
+}
+
 .shelf { 
     display: grid; grid-template-columns: repeat(auto-fill, 150px); 
     gap: 20px; width: 100%; max-width: 1100px; justify-content: center; padding: 20px 40px;
